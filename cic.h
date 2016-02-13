@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cassert>
+#include <cstring>
 
 enum {
     TIDENT,
@@ -16,6 +17,12 @@ enum {
     TNEWLINE,
     TSPACE,
     TMACRO_PARAM
+};
+
+struct Buffer {
+    char *body;
+    int nalloc;
+    int len;
 };
 
 struct File {
@@ -48,6 +55,7 @@ struct Token {
             int pos;
         };
     };
+    Token() {}
     Token(int k, char *p) {
         kind = k;
         sval = p;
@@ -63,3 +71,28 @@ struct Token {
         return *this;
     }
 };
+
+// buffer.cpp
+Buffer* makeBuffer();
+char* bufBody(Buffer &b);
+int bufLen(Buffer &b);
+void bufWrite(Buffer &b, char c);
+void buf_Append(Buffer &b, char *s, int len);
+void bufPrintf(Buffer &b, char *fmt, ...);
+char *vformat(char *fmt, va_list ap);
+char *format(char *fmt, ...);
+char *quoteCstring(char *p);
+char *quoteCstringLen(char *p, int len);
+char *quoteChar(char c);
+
+//file.cpp
+File *makeFile(FILE &file, char *name);
+File *makeFileString(char *s);
+int readc(void);
+void unreadc(int c);
+File *currentFile(void);
+void streamPush(File &file);
+int streamDepth(void);
+char *inputPosition(void);
+void streamStash(File &f);
+void streamUnstash(void);

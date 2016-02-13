@@ -75,3 +75,7 @@ int readc() {
         return c;
     }
 }
+
+File* currentFile() {
+    return &files[files.size() - 1];
+}
