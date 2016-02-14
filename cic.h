@@ -3,6 +3,9 @@
 #include <vector>
 #include <cassert>
 #include <cstring>
+#include <cstdarg>
+#include <unistd.h>
+#include <stdio.h>
 
 enum {
     TIDENT,
@@ -28,7 +31,7 @@ struct Buffer {
 struct File {
     FILE *file;
     char *p;
-    std::string name;
+    char *name;
     int line, column;
     int ntok;
     int last;
@@ -38,6 +41,7 @@ struct File {
 
 struct Token {
     int kind;
+    File *file;
     int line, column;
     bool space, bol;
     int cnt;
@@ -45,7 +49,7 @@ struct Token {
     union {
         int id;
         struct {
-            char *sval;
+            const char *sval;
             int slen;
             int c;
             int enc;
@@ -56,20 +60,57 @@ struct Token {
         };
     };
     Token() {}
-    Token(int k, char *p) {
-        kind = k;
-        sval = p;
-    }
-    Token(int k, char *s, int len, int _enc) {
-        kind = k;
-        sval = s;
-        slen = len;
-        enc = _enc;
-    }
+    Token(int k, const char *p): kind(k), sval(p) {}
+    Token(int k, const char *s, int len, int _enc):
+    kind(k), sval(s), slen(len), enc(_enc) {}
+    Token(int k, int i): kind(k), id(i) {}
+    Token(int k, char _c): kind(k), c(_c) {}
+    Token(int k, int _c, int _enc): kind(k), c(_c), enc(_enc) {}
     Token& operator=(const Token &other) {
         kind = other.kind;
         return *this;
     }
+};
+
+enum {
+    AST_LITERAL = 256,
+    AST_LVAR,
+    AST_GVAR,
+    AST_TYPEDEF,
+    AST_FUNCALL,
+    AST_FUNCPTR_CALL,
+    AST_FUNCDESG,
+    AST_FUNC,
+    AST_DECL,
+    AST_INIT,
+    AST_CONV,
+    AST_ADDR,
+    AST_DEREF,
+    AST_IF,
+    AST_TERNARY,
+    AST_DEFAULT,
+    AST_RETURN,
+    AST_COMPOUND_STMT,
+    AST_STRUCT_REF,
+    AST_GOTO,
+    AST_COMPUTED_GOTO,
+    AST_LABEL,
+    OP_SIZEOF,
+    OP_CAST,
+    OP_SHR,
+    OP_SHL,
+    OP_A_SHR,
+    OP_A_SHL,
+    OP_PRE_INC,
+    OP_PRE_DEC,
+    OP_POST_INC,
+    OP_POST_DEC,
+    OP_LABEL_ADDR,
+#define op(name, _) name,
+#define keyword(name, x, y) name,
+#include "keyword.inc"
+#undef keyword
+#undef op
 };
 
 // buffer.cpp
@@ -79,8 +120,8 @@ int bufLen(Buffer &b);
 void bufWrite(Buffer &b, char c);
 void buf_Append(Buffer &b, char *s, int len);
 void bufPrintf(Buffer &b, char *fmt, ...);
-char *vformat(char *fmt, va_list ap);
-char *format(char *fmt, ...);
+char *vformat(const char *fmt, va_list ap);
+char *format(const char *fmt, ...);
 char *quoteCstring(char *p);
 char *quoteCstringLen(char *p, int len);
 char *quoteChar(char c);
@@ -96,3 +137,20 @@ int streamDepth(void);
 char *inputPosition(void);
 void streamStash(File &f);
 void streamUnstash(void);
+
+//error.cpp
+extern bool enable_warning;
+extern bool dumpstack;
+extern bool dumpsource;
+extern bool w_e;
+
+#define STR2(x) #x
+#define STR(x) STR2(x)
+#define error(...)       errorf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
+#define errort(tok, ...) errorf(__FILE__ ":" STR(__LINE__), token_pos(tok), __VA_ARGS__)
+#define warn(...)        warnf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
+#define warnt(tok, ...)  warnf(__FILE__ ":" STR(__LINE__), token_pos(tok), __VA_ARGS__)
+
+[[noreturn]] void errorf(char *line, char *pos, const char *fmt, ...);
+void warnf(char *line, char *pos, const char *fmt, ...);
+char* tokenPos(Token *tk);

@@ -1,10 +1,19 @@
 #include "cic.h"
 
+#define errorp(p, ...) errorf(__FILE__ ":" STR(__LINE__), posString(&p), __VA_ARGS__)
+#define warnp(p, ...) warnf(__FILE__ ":" STR(__LINE__), posString(&p), __VA_ARGS__)
+
 struct Pos {
     int line, column;
 };
 
 static Pos pos;
+static std::vector<std::vector<Token*>* > *buffers;
+
+static char* posString(Pos *p) {
+    File *f = currentFile();
+    return format("%s:%d:%d", f ? f->name : "(unknown)", p->line, p->column);
+}
 
 static Pos getPos(int delta) {
     File *f = currentFile();
@@ -19,11 +28,11 @@ static Token* makeToken(Token *tmpl) {
     return r;
 }
 
-static Token* makeIdent(char *p) {
+static Token* makeIdent(const char *p) {
     return makeToken(new Token(TIDENT, p));
 }
 
-static Token* makeStrtok(char *s, int len, int enc) {
+static Token* makeStrtok(const char *s, int len, int enc) {
     return makeToken(new Token(TSTRING, s, len, enc));
 }
 
@@ -31,7 +40,7 @@ static Token* makeKeyword(int id) {
     return makeToken(new Token(TKEYWORD, id));
 }
 
-static Token* makeNumber(char *s) {
+static Token* makeNumber(const char *s) {
     return makeToken(new Token(TNUMBER, s));
 }
 
@@ -221,14 +230,130 @@ static Token* readString(int enc) {
             bufWrite(*b, c);
             continue;
         }
-        bool isucs = (peek() == 'u' || peek() == 'U');
-        c = readEscapedChar();
-        if (isucs) {
-            writeUtf8(*b, c);
-            continue;
-        }
         bufWrite(*b, c);
     }
     bufWrite(*b, '\0');
     return makeStrtok(bufBody(*b), bufLen(*b), enc);
+}
+
+static Token* readIdent(char c) {
+    Buffer *b = makeBuffer();
+    bufWrite(*b, c);
+    while (1) {
+        c = readc();
+        if (isalnum(c) || c & 0x80 || c == '_' || c == '$') {
+            bufWrite(*b, c);
+            continue;
+        }
+        unreadc(c);
+        bufWrite(*b, '\0');
+        return makeIdent(bufBody(*b));
+    }
+}
+
+static Token* readRep(char expect, int t1, int els) {
+    return makeKeyword(next(expect) ? t1 : els);
+}
+
+static Token* readRep2(char expect1, int t1, char expect2, int t2, char els) {
+    if (next(expect1)) return makeKeyword(t1);
+    return makeKeyword(next(expect2) ? t2 : els);
+}
+
+static Token* doReadToken() {
+    if (skipSpace()) return new Token(TSPACE);
+    mark();
+    int c = readc();
+    switch (c) {
+        case '\n': return new Token(TNEWLINE);
+        case ':': return makeKeyword(next('<') ? ']' : ':');
+        case '+': return readRep2('+', OP_INC, '=', OP_A_ADD, '+');
+        case '*': return readRep('=', OP_A_MUL, '*');
+        case '=': return readRep('=', OP_EQ, '=');
+        case '!': return readRep('=', OP_NE, '!');
+        case '&': return readRep2('&', OP_LOGAND, '=', OP_A_AND, '&');
+        case '|': return readRep2('|', OP_LOGOR, '=', OP_A_OR, '|');
+        case '^': return readRep('=', OP_A_XOR, '^');
+        case '"': return readString(ENC_NONE);
+        case '\'': return readChar(ENC_NONE);
+        case '/': return makeKeyword(next('=') ? OP_A_DIV : '/');
+        case 'a' ... 't': case 'v' ... 'z': case 'A' ... 'K':
+        case 'M' ... 'T': case 'V' ... 'Z': case '_': case '$':
+        case 0x80 ... 0xfd: return readIdent(c);
+        case '0' ... '9': return readNumber(c);
+        case '.':
+            if (isdigit(peek())) return readNumber(c);
+            if (next('.')) {
+                if (next('.'))
+                    return makeKeyword(KELLIPSIS);
+            }
+            return makeIdent("..");
+        case '(': case ')': case ',': case ';': case '[':
+        case ']': case '{': case '}': case '?': case '~':
+            return makeKeyword(c);
+        case '-':
+            if (next('-')) return makeKeyword(OP_DEC);
+            if (next('>')) return makeKeyword(OP_ARROW);
+            if (next('=')) return makeKeyword(OP_A_SUB);
+            return makeKeyword('-');
+        case '<':
+            if (next('<')) return readRep('=', OP_A_SAL, OP_SAL);
+            if (next('=')) return makeKeyword(OP_LE);
+            return makeKeyword('<');
+        case '>':
+            if (next('=')) return makeKeyword(OP_GE);
+            if (next('>')) return readRep('=', OP_A_SAR, OP_SAR);
+            return makeKeyword('>');
+        case '%': return readRep('=', OP_A_MOD, '%');
+        case EOF: return new Token(TEOF);
+        default: return makeInvalid(c);
+    }
+}
+
+static bool bufferEmpty() {
+    return buffers->size() == 1 && (*buffers)[0]->size() == 0;
+}
+
+bool isKeyword(Token &tk, int c) {
+    return tk.kind == TKEYWORD && tk.id == c;
+}
+
+void tokenBufferStash(std::vector<Token*> *buf) {
+    buffers->push_back(buf);
+}
+
+void tokenBufferUnstash() {
+    buffers->pop_back();
+}
+
+void ungetToken(Token *tk) {
+    if (tk->kind == TEOF) return;
+    std::vector<Token*> *buf = (*buffers)[buffers->size() - 1];
+    buf->push_back(tk);
+}
+
+Token* lexString(char *s) {
+    Token *r = doReadToken();
+    next('\n');
+    Pos p = getPos(0);
+    if (peek() != EOF) errorp(p, "unconsumed input: %s", s);
+    return r;
+}
+
+Token* lex() {
+    std::vector<Token*> *buf = 
+        (*buffers)[buffers->size() - 1];
+    if (buf->size() > 0) {
+        buf->pop_back();
+        return (*buf)[buf->size()];
+    }
+    if (buffers->size() > 1) return new Token(TEOF);
+    bool bol = (currentFile()->column == 1);
+    Token *tk = doReadToken();
+    while (tk->kind == TSPACE) {
+        tk = doReadToken();
+        tk->space = 1;
+    }
+    tk->bol = bol;
+    return tk;
 }
