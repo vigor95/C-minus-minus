@@ -8,9 +8,18 @@ struct Pos {
 };
 
 static Pos pos;
-static std::vector<std::vector<Token*>* > *buffers;
+static std::vector<std::vector<Token*>* > *buffers = new std::vector<std::vector<Token*> *>;
 
-static char* posString(Pos *p) {
+void lexInit(const char *filename) {
+    buffers->push_back(new std::vector<Token*>);
+    FILE *fp = fopen(filename, "r");
+    if (!fp) error("Cannot open %s: %s", filename, strerror(errno));
+    printf("Open %s successfully!\n", filename);
+    streamPush(makeFile(fp, filename));
+    printf("streamPush ok\n");
+}
+
+static const char* posString(Pos *p) {
     File *f = currentFile();
     return format("%s:%d:%d", f ? f->name : "(unknown)", p->line, p->column);
 }
@@ -20,11 +29,18 @@ static Pos getPos(int delta) {
     return (Pos){f->line, f->column + delta};
 }
 
+static void mark() {
+    pos = getPos(0);
+}
+
 static Token* makeToken(Token *tmpl) {
     Token *r = new Token;
     *r = *tmpl;
+    File *f = currentFile();
+    r->file = f;
     r->line = pos.line;
     r->column = pos.column;
+    r->cnt = f->ntok++;
     return r;
 }
 
@@ -220,6 +236,15 @@ static int readEscapedChar() {
     return c;
 }
 
+static Token* readChar(int enc) {
+    int c = readc();
+    int r = (c == '\\') ? readEscapedChar() : c;
+    c = readc();
+    if (c != '\'') errorp(pos, "unterminated char");
+    if (enc == ENC_NONE) return makeChar((char)r, enc);
+    return makeChar(r, enc);
+}
+
 static Token* readString(int enc) {
     Buffer *b = makeBuffer();
     while (1) {
@@ -341,13 +366,14 @@ Token* lexString(char *s) {
 }
 
 Token* lex() {
+    //if (buffers == NULL) buffers = new std::vector<std::vector<Token*> >;
     std::vector<Token*> *buf = 
         (*buffers)[buffers->size() - 1];
     if (buf->size() > 0) {
         buf->pop_back();
         return (*buf)[buf->size()];
     }
-    if (buffers->size() > 1) return new Token(TEOF);
+    if(buffers->size() > 1) return new Token(TEOF);
     bool bol = (currentFile()->column == 1);
     Token *tk = doReadToken();
     while (tk->kind == TSPACE) {

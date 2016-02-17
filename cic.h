@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <unistd.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 enum {
     TIDENT,
@@ -22,6 +23,14 @@ enum {
     TMACRO_PARAM
 };
 
+enum {
+    ENC_NONE,
+    ENC_CHAR16,
+    ENC_CHAR32,
+    ENC_UTF8,
+    ENC_WCHAR
+};
+
 struct Buffer {
     char *body;
     int nalloc;
@@ -30,8 +39,8 @@ struct Buffer {
 
 struct File {
     FILE *file;
-    char *p;
-    char *name;
+    const char *p;
+    const char *name;
     int line, column;
     int ntok;
     int last;
@@ -60,6 +69,7 @@ struct Token {
         };
     };
     Token() {}
+    Token(int k): kind(k) {}
     Token(int k, const char *p): kind(k), sval(p) {}
     Token(int k, const char *s, int len, int _enc):
     kind(k), sval(s), slen(len), enc(_enc) {}
@@ -127,16 +137,25 @@ char *quoteCstringLen(char *p, int len);
 char *quoteChar(char c);
 
 //file.cpp
-File *makeFile(FILE &file, char *name);
-File *makeFileString(char *s);
+File *makeFile(FILE *file, const char *name);
+File *makeFileString(const char *s);
 int readc(void);
 void unreadc(int c);
 File *currentFile(void);
-void streamPush(File &file);
+void streamPush(File *file);
 int streamDepth(void);
 char *inputPosition(void);
-void streamStash(File &f);
+void streamStash(File *f);
 void streamUnstash(void);
+
+//lex.cpp
+void lexInit(const char *filename);
+bool isKeyword(Token &tk, int c);
+void tokenBufferStash(std::vector<Token*> *buf);
+void tokenBufferUnstash();
+void ungetToken(Token *tk);
+Token* lexString(char *s);
+Token* lex();
 
 //error.cpp
 extern bool enable_warning;
@@ -151,6 +170,6 @@ extern bool w_e;
 #define warn(...)        warnf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
 #define warnt(tok, ...)  warnf(__FILE__ ":" STR(__LINE__), token_pos(tok), __VA_ARGS__)
 
-[[noreturn]] void errorf(char *line, char *pos, const char *fmt, ...);
-void warnf(char *line, char *pos, const char *fmt, ...);
-char* tokenPos(Token *tk);
+[[noreturn]] void errorf(const char *line, const char *pos, const char *fmt, ...);
+void warnf(const char *line, const char *pos, const char *fmt, ...);
+const char* tokenPos(Token *tk);
