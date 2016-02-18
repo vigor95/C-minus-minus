@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <iostream>
 
 enum {
     TIDENT,

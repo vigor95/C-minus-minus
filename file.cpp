@@ -1,6 +1,7 @@
 #include "cic.h"
 
 std::vector<File*> *files = NULL;
+std::vector<std::vector<File*>* > *stashed = new std::vector<std::vector<File*>* >;
 
 File* makeFile(FILE *file, const char *name) {
     File *r = (File *)calloc(1, sizeof(File));
@@ -27,7 +28,7 @@ static void closeFile(File *f) {
     if (f->file) fclose(f->file);
 }
 
-static int readcFile(File f) {
+static int readcFile(File &f) {
     int c = getc(f.file);
     if (c == EOF) {
         c = (f.last == '\n' || f.last == EOF) ? EOF : '\n';       
@@ -84,9 +85,11 @@ int readc() {
     while (1) {
         int c = get();
         if (c == EOF) {
-            if (files->size() == 1) return c;
-            files->pop_back();
+            if (files->size() == 1) {
+                return c;
+            }
             closeFile((*files)[files->size() - 1]);
+            files->pop_back();
             continue;
         }
         if (c != '\\') return c;
@@ -104,4 +107,18 @@ File* currentFile() {
 void streamPush(File *f) {
     if (files == NULL) files = new std::vector<File*>;
     files->push_back(f);
+}
+
+void streamStash(File *f) {
+    printf("streamstash\n");
+    stashed->push_back(files);
+    std::vector<File*> *r = new std::vector<File*>;
+    r->push_back(f);
+    files = r;
+}
+
+void streamUnstash() {
+    printf("streamUnstash\n");
+    files = (*stashed)[stashed->size() - 1];
+    stashed->pop_back();
 }

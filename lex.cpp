@@ -266,7 +266,7 @@ static Token* readIdent(char c) {
     bufWrite(*b, c);
     while (1) {
         c = readc();
-        if (isalnum(c) || c & 0x80 || c == '_' || c == '$') {
+        if (isalnum(c) || (c & 0x80) || c == '_' || c == '$') {
             bufWrite(*b, c);
             continue;
         }
@@ -290,8 +290,8 @@ static Token* doReadToken() {
     mark();
     int c = readc();
     switch (c) {
-        case '\n': return new Token(TNEWLINE);
-        case ':': return makeKeyword(next('<') ? ']' : ':');
+        case '\n':return new Token(TNEWLINE);
+        case ':': return makeKeyword(next('>') ? ']' : ':');
         case '+': return readRep2('+', OP_INC, '=', OP_A_ADD, '+');
         case '*': return readRep('=', OP_A_MUL, '*');
         case '=': return readRep('=', OP_EQ, '=');
@@ -311,8 +311,9 @@ static Token* doReadToken() {
             if (next('.')) {
                 if (next('.'))
                     return makeKeyword(KELLIPSIS);
+                return makeIdent("..");
             }
-            return makeIdent("..");
+            makeKeyword('.');
         case '(': case ')': case ',': case ';': case '[':
         case ']': case '{': case '}': case '?': case '~':
             return makeKeyword(c);
@@ -357,11 +358,13 @@ void ungetToken(Token *tk) {
     buf->push_back(tk);
 }
 
-Token* lexString(char *s) {
+Token* lexString(const char *s) {
+    streamStash(makeFileString(s));
     Token *r = doReadToken();
     next('\n');
     Pos p = getPos(0);
     if (peek() != EOF) errorp(p, "unconsumed input: %s", s);
+    streamUnstash();
     return r;
 }
 
