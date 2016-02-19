@@ -2,7 +2,7 @@
 #include <string>
 #include "cic.h"
 
-const char *infile;
+static char *infile;
 static std::string outfile;
 std::string table[] = {"indent", "keyword", "number", "char","string",
 "eof", "!invalid", "min_cpp_token", "newline", "space", "macro"};

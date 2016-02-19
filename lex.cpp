@@ -10,7 +10,7 @@ struct Pos {
 static Pos pos;
 static std::vector<std::vector<Token*>* > *buffers = new std::vector<std::vector<Token*> *>;
 
-void lexInit(const char *filename) {
+void lexInit(char *filename) {
     buffers->push_back(new std::vector<Token*>);
     FILE *fp = fopen(filename, "r");
     if (!fp) error("Cannot open %s: %s", filename, strerror(errno));
@@ -358,7 +358,7 @@ void ungetToken(Token *tk) {
     buf->push_back(tk);
 }
 
-Token* lexString(const char *s) {
+Token* lexString(char *s) {
     streamStash(makeFileString(s));
     Token *r = doReadToken();
     next('\n');

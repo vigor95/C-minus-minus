@@ -1,4 +1,5 @@
 #include <set>
+#include <map>
 #include <string>
 #include <vector>
 #include <cassert>
@@ -30,6 +31,15 @@ enum {
     ENC_CHAR32,
     ENC_UTF8,
     ENC_WCHAR
+}; 
+
+struct Map {
+    Map *parent;
+    char **key;
+    void **val;
+    int size;
+    int nelem;
+    int nused;
 };
 
 struct Buffer {
@@ -40,8 +50,8 @@ struct Buffer {
 
 struct File {
     FILE *file;
-    const char *p;
-    const char *name;
+    char *p;
+    char *name;
     int line, column;
     int ntok;
     int last;
@@ -59,7 +69,7 @@ struct Token {
     union {
         int id;
         struct {
-            const char *sval;
+            char *sval;
             int slen;
             int c;
             int enc;
@@ -71,9 +81,17 @@ struct Token {
     };
     Token() {}
     Token(int k): kind(k) {}
-    Token(int k, const char *p): kind(k), sval(p) {}
+    Token(int k, const char *p): kind(k) {
+        printf("Token(int k, const char *p)\n");
+        sval = new char[strlen(p) + 1];
+        strcpy(sval, p);
+    }
     Token(int k, const char *s, int len, int _enc):
-    kind(k), sval(s), slen(len), enc(_enc) {}
+        kind(k), slen(len), enc(_enc) {
+            printf("Token(int k, const char *s, int len, int _enc)\n");
+            sval = new char[strlen(s) + 1];
+            strcpy(sval, s);
+        }
     Token(int k, int i): kind(k), id(i) {}
     Token(int k, char _c): kind(k), c(_c) {}
     Token(int k, int _c, int _enc): kind(k), c(_c), enc(_enc) {}
@@ -124,6 +142,125 @@ enum {
 #undef op
 };
 
+enum {
+    KIND_VOID,
+    KIND_BOOL,
+    KIND_CHAR,
+    KIND_SHORT,
+    KIND_INT,
+    KIND_LONG,
+    KIND_LLONG,
+    KIND_FLOAT,
+    KIND_DOUBLE,
+    KIND_LDOUBLE,
+    KIND_ARRAY,
+    KIND_ENUM,
+    KIND_PTR,
+    KIND_STRUCT,
+    KIND_FUNC,
+    KIND_STUB
+};
+
+struct Type {
+    int kind;
+    int size;
+    int align;
+    bool usig;
+    bool isstatic;
+    Type *ptr;
+    int len;
+    int offset;
+    bool isstruct;
+    int bitoff;
+    int bitsize;
+    Type *rettype;
+    std::vector<void*> *params;
+    bool hasva;
+    bool oldstyle;
+    Type() {}
+    Type(int k, Type *t, int s, int a): 
+        kind(k),size(s), align(a), ptr(t) {}
+    Type(int k, int s, int a, bool u):
+        kind(k), size(s), align(a), usig(u) {}
+};
+
+struct SourceLoc {
+    char *file;
+    int line;
+};
+
+struct Node {
+    int kind;
+    Type *tp;
+    SourceLoc *sl;
+    union {
+        long ival;
+        struct {
+            double fval;
+            char *flabel;
+        };
+        struct {
+            char *sval;
+            char *slabel;
+        };
+        struct {
+            char *varname;
+            int loff;
+            char *glabel;
+        };
+        struct {
+            Node *left, *right;
+        };
+        struct {
+            Node *operand;
+        };
+        struct {
+            char *fname;
+            Type *ftype;
+            Node *fptr;
+            Node *body;
+        };
+        struct {
+            Node *declvar;
+        };
+        struct {
+            Node *initval;
+            int initoff;
+            Type *totype;
+        };
+        struct {
+            Node *cond;
+            Node *then;
+            Node *els;
+        };
+        struct {
+            char *label;
+            char *newlabel;
+        };
+        Node *retval;
+        struct {
+            Node *struc;
+            char *field;
+            Type *fieldtype;
+        };
+    };
+};
+
+extern Type *type_void;
+extern Type *type_bool;
+extern Type *type_char;
+extern Type *type_short;
+extern Type *type_int;
+extern Type *type_long;
+extern Type *type_uchar;
+extern Type *type_ushort;
+extern Type *type_uint;
+extern Type *type_ulong;
+extern Type *type_ullong;
+extern Type *type_float;
+extern Type *type_double;
+extern Type *type_ldouble;
+
 // buffer.cpp
 Buffer* makeBuffer();
 char* bufBody(Buffer &b);
@@ -138,8 +275,8 @@ char *quoteCstringLen(char *p, int len);
 char *quoteChar(char c);
 
 //file.cpp
-File *makeFile(FILE *file, const char *name);
-File *makeFileString(const char *s);
+File *makeFile(FILE *file, char *name);
+File *makeFileString(char *s);
 int readc(void);
 void unreadc(int c);
 File *currentFile(void);
@@ -150,7 +287,7 @@ void streamStash(File *f);
 void streamUnstash(void);
 
 //lex.cpp
-void lexInit(const char *filename);
+void lexInit(char *filename);
 bool isKeyword(Token &tk, int c);
 void tokenBufferStash(std::vector<Token*> *buf);
 void tokenBufferUnstash();

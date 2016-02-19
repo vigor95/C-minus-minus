@@ -3,7 +3,7 @@
 std::vector<File*> *files = NULL;
 std::vector<std::vector<File*>* > *stashed = new std::vector<std::vector<File*>* >;
 
-File* makeFile(FILE *file, const char *name) {
+File* makeFile(FILE *file, char *name) {
     File *r = (File *)calloc(1, sizeof(File));
     r->file = file;
     r->name = name;
@@ -16,7 +16,7 @@ File* makeFile(FILE *file, const char *name) {
     return r;
 }
 
-File *makeFileString(const char *s) {
+File *makeFileString(char *s) {
     File *r = (File *)calloc(1, sizeof(File));
     r->line = 1;
     r->column = 1;
@@ -42,7 +42,7 @@ static int readcFile(File &f) {
     return c;
 }
 
-static int readcString(File f) {
+static int readcString(File &f) {
     int c;
     if (*f.p == '\0') c = (f.last == '\n' || f.last == EOF) ? EOF : '\n';
     else if (*f.p == '\r') {
