@@ -110,6 +110,7 @@ static Node* astInitType(Type* tp, long val) {
 }
 
 static Node* astFloattype(Type *tp, double val) {
+    return makeAst(&(Node){AST_LITERAL, tp, .fval = val});
     return makeAst(new Node(AST_LITERAL, tp, val));
 }
 
@@ -117,8 +118,6 @@ static Node* astLvar(Type *tp, char *name) {
     Node *r = makeAst(new Node(AST_LVAR, tp, name));
     if (localenv) localenv->insert(); 
 }
-
-
 
 static Type* makeType(Type *tmpl) {
     Type *r = new Type;

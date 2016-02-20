@@ -244,6 +244,31 @@ struct Node {
             Type *fieldtype;
         };
     };
+    Node() {}
+    Node(int k, Type *t, Node *o): kind(k) {
+        tp = new Type;
+        *tp = *t;
+        operand = new Node;
+        *operand = *o;
+    }
+    Node(int k, Type *t): kind(k) {
+        tp = new Type;
+        *tp =*t;
+    }
+    Node(int k, Type *t, long v): kind(k), ival(v) {
+        tp = new Type;
+        *tp = *t;
+    }
+    Node(int k, Type *t, double v): kind(k), fval(v) {
+        tp = new Type;
+        *tp = *t;
+    }
+    Node(int k, Type *t, char *n): kind(k) {
+        tp = new Type;
+        *tp = *t;
+        varname = new char[strlen(n) + 1];
+        strcpy(varname, n);
+    }
 };
 
 extern Type *type_void;
