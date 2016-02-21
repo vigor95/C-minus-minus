@@ -178,8 +178,7 @@ struct Type {
     bool hasva;
     bool oldstyle;
     Type() {}
-    Type(int k, Type *t, int s, int a): 
-        kind(k),size(s), align(a), ptr(t) {}
+    Type(int k): kind(k) {}
     Type(int k, int s, int a, bool u):
         kind(k), size(s), align(a), usig(u) {}
 };
@@ -244,30 +243,71 @@ struct Node {
             Type *fieldtype;
         };
     };
-    Node() {}
-    Node(int k, Type *t, Node *o): kind(k) {
+    Node() = default;
+    Node(int k): kind(k) {}
+    Node(int k, Type *t): kind(k) {
         tp = new Type;
         *tp = *t;
+    }
+    Node *copyNode(Node* rhs) {
+        Node *t = new Node;
+        *t = *rhs;
+        return t;
+    }
+    void copyChar(char *dest, char *src) {
+        dest = new char[strlen(src)];
+        strcpy(dest, src);
+    }
+    void setIval(long i) {
+        ival = i;
+    }
+    void setFval(double f) {
+        fval = f;
+    }
+    void setVarname(char *n) {
+        copyChar(varname, n);
+    }
+    void setGlabel(char *n) {
+        copyChar(glabel, n);
+    }
+    void setOperand(Node *o) {
         operand = new Node;
         *operand = *o;
     }
-    Node(int k, Type *t): kind(k) {
-        tp = new Type;
-        *tp =*t;
+    void setLeft(Node *l) {
+        left = copyNode(l);
     }
-    Node(int k, Type *t, long v): kind(k), ival(v) {
-        tp = new Type;
-        *tp = *t;
+    void setRight(Node *r) {
+        right = copyNode(r);
     }
-    Node(int k, Type *t, double v): kind(k), fval(v) {
-        tp = new Type;
-        *tp = *t;
+    void setSval(char *s) {
+        copyChar(sval, s);
     }
-    Node(int k, Type *t, char *n): kind(k) {
-        tp = new Type;
-        *tp = *t;
-        varname = new char[strlen(n) + 1];
-        strcpy(varname, n);
+    void setFname(char *f) {
+        copyChar(fname, f);
+    }
+    void setFtype(Type *t) {
+        ftype = new Type;
+        *ftype = *t;
+    }
+    void setFptr(Node *f) {
+        fptr = new Node;
+        *fptr = *f;
+    }
+    void setBody(Node *b) {
+        body = copyNode(b);
+    }
+    void setDeclvar(Node *v) {
+        declvar = copyNode(v);
+    }
+    void setDeclinit(Node *i) {
+    }
+    void setInitval(Node *v) {
+        initval = copyNode(v);
+    }
+    void setTotype(Type *t) {
+        totype = new Type;
+        *totype = *t;
     }
 };
 
