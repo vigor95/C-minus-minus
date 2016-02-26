@@ -10,6 +10,24 @@
 #include <sys/stat.h>
 #include <iostream>
 
+char* newChar(char *src) {
+    char *ret = NULL;
+    if (src) {
+        ret = new char[strlen(src) + 1];
+        strcpy(ret, src);
+    }
+    return ret;
+}
+
+char* newChar(const char *src) {
+    char *ret = NULL;
+    if (src) {
+        ret = new char[strlen(src) + 1];
+        strcpy(ret, src);
+    }
+    return ret;
+}
+
 enum {
     TIDENT,
     TKEYWORD,
@@ -40,6 +58,11 @@ struct Map {
     int size;
     int nelem;
     int nused;
+};
+struct Type;
+struct Dict {
+    std::map<char*, Type*> *map;
+    std::vector<char*> *key;
 };
 
 struct Buffer {
@@ -169,18 +192,23 @@ struct Type {
     bool isstatic;
     Type *ptr;
     int len;
+    Dict *fields;
     int offset;
     bool isstruct;
     int bitoff;
     int bitsize;
     Type *rettype;
-    std::vector<void*> *params;
+    std::vector<Type*> *params;
     bool hasva;
     bool oldstyle;
     Type() {}
     Type(int k): kind(k) {}
     Type(int k, int s, int a, bool u):
         kind(k), size(s), align(a), usig(u) {}
+    Type(int k, Type *t, int s, int a): kind(k), size(s), 
+        align(a), ptr(new Type(*t)) {}
+    Type(int k, Type *t, int s, int l, int a): kind(k),
+        size(s), align(a), ptr(new Type(*t)), len(l) {}
 };
 
 struct SourceLoc {
@@ -208,7 +236,8 @@ struct Node {
             char *glabel;
         };
         struct {
-            Node *left, *right;
+            Node *left;
+            Node *right;
         };
         struct {
             Node *operand;
@@ -228,87 +257,122 @@ struct Node {
             Type *totype;
         };
         struct {
-            Node *cond;
-            Node *then;
-            Node *els;
+            Node *cond, *then, *els;
         };
         struct {
-            char *label;
-            char *newlabel;
+            char *label, *newlabel;
         };
         Node *retval;
+        std::vector<Node*> *stmts;
         struct {
             Node *struc;
             char *field;
             Type *fieldtype;
         };
     };
-    Node() = default;
-    Node(int k): kind(k) {}
-    Node(int k, Type *t): kind(k) {
-        tp = new Type;
-        *tp = *t;
+    /*Node() = default;
+    Node(int k, Type *t, Node *o): kind(k), tp(t ? new Type(*t) : NULL),
+        operand(o ? new Node(*o) : NULL) {}
+    Node(int k, Type *t): kind(k), tp(t ? new Type(*t) : NULL) {}
+    Node(int k, Type *t, long iv): kind(k), tp(t ? new Type(*t) : NULL),
+        ival(iv) {}
+    Node(int k, Type *t, double fv): kind(k), tp(t ? new Type(*t) : NULL),
+        fval(fv) {}
+    Node(int k, Type *t, char *vn, char *gn): kind(k),
+        tp(t ? new Type(*t) : NULL), varname(newChar(vn)), glabel(newChar(          gn)) {}
+    Node(int k, Type *t, char *sv, int flag): kind(k), 
+        tp(t ? new Type(*t) : NULL) {
+        if (flag == 1) {
+            varname = newChar(sv);
+        }
+        else if (flag == 2) {
+            sval = newChar(sv);
+        }
+        else if (flag == 3) {
+            fname = newChar(sv);
+        }
     }
-    Node *copyNode(Node* rhs) {
-        Node *t = new Node;
-        *t = *rhs;
-        return t;
-    }
-    void copyChar(char *dest, char *src) {
-        dest = new char[strlen(src)];
-        strcpy(dest, src);
-    }
-    void setIval(long i) {
-        ival = i;
-    }
-    void setFval(double f) {
-        fval = f;
-    }
-    void setVarname(char *n) {
-        copyChar(varname, n);
-    }
-    void setGlabel(char *n) {
-        copyChar(glabel, n);
-    }
-    void setOperand(Node *o) {
-        operand = new Node;
-        *operand = *o;
-    }
-    void setLeft(Node *l) {
-        left = copyNode(l);
-    }
-    void setRight(Node *r) {
-        right = copyNode(r);
-    }
-    void setSval(char *s) {
-        copyChar(sval, s);
-    }
-    void setFname(char *f) {
-        copyChar(fname, f);
-    }
-    void setFtype(Type *t) {
-        ftype = new Type;
-        *ftype = *t;
-    }
-    void setFptr(Node *f) {
-        fptr = new Node;
-        *fptr = *f;
-    }
-    void setBody(Node *b) {
-        body = copyNode(b);
-    }
-    void setDeclvar(Node *v) {
-        declvar = copyNode(v);
-    }
-    void setDeclinit(Node *i) {
-    }
-    void setInitval(Node *v) {
-        initval = copyNode(v);
-    }
-    void setTotype(Type *t) {
-        totype = new Type;
-        *totype = *t;
-    }
+    Node(int k, Type *t, char *fn, Type *ft): kind(k),
+        tp(t ? new Type(*t) : NULL), fname(newChar(fn)),
+        ftype(ft ? new Type(*ft) : NULL) {}
+    Node(int k, Type *t, Node *fp, std::vector<void*> as): kind(k), tp(t ? new Type(*t) : NULL),
+        fptr(fp ? new Node(*fp) : NULL) {}
+    Node(int k, Type *t, char *fn, std::vector<void*> ps, std::vector<void*> ls, Node *b): kind(k), tp(t ? new Type(*t) : NULL), fname(newChar(fn)),
+        localvars(ls), body(b ? new Node(*b) : NULL) {}
+    Node(int k, Node *v, std::vector<void*> di) {}
+    */
+};
+
+struct IntNode: public Node {
+    long ival;
+};
+
+struct FloatNode: public Node {
+    double fval;
+    char *flabel;
+};
+
+struct StringNode: public Node {
+    char *sval;
+    char *slabel;
+};
+
+struct LocgloNode: public Node {
+    char *varname;
+    int loff;
+    char *glabel;
+};
+
+struct BinaryNode: public Node {
+    Node *left;
+    Node *right;
+};
+
+struct UnaryNode: public Node {
+    Node *operand;
+    UnaryNode(Node *o) {}
+};
+
+struct FuncNode: public Node {
+    char *fname;
+    Type *ftype;
+    Node *fptr;
+    Node *body;
+};
+
+struct DeclNode: public Node {
+    Node *declvar;
+};
+
+struct InitNode: public Node {
+    Node *initval;
+    int *initoff;
+    Type *totype;
+};
+
+struct IfNode: public Node {
+    Node *cond;
+    Node *then;
+    Node *els;
+};
+
+struct GotoNode: public Node {
+    char *label;
+    char *newlabel;
+};
+
+struct  ReturnNode: public Node {
+    Node *retval;
+};
+
+struct CompNode: public Node {
+    
+};
+
+struct StructNode: public Node {
+    Node *struc;
+    char *field;
+    Type *fieldtype;
 };
 
 extern Type *type_void;
@@ -328,16 +392,27 @@ extern Type *type_ldouble;
 
 // buffer.cpp
 Buffer* makeBuffer();
-char* bufBody(Buffer &b);
-int bufLen(Buffer &b);
-void bufWrite(Buffer &b, char c);
-void buf_Append(Buffer &b, char *s, int len);
-void bufPrintf(Buffer &b, char *fmt, ...);
+char* bufBody(Buffer *b);
+int bufLen(Buffer *b);
+void bufWrite(Buffer *b, char c);
+void bufAppend(Buffer *b, char *s, int len);
+void bufPrintf(Buffer *b, const char *fmt, ...);
 char *vformat(const char *fmt, va_list ap);
 char *format(const char *fmt, ...);
 char *quoteCstring(char *p);
 char *quoteCstringLen(char *p, int len);
 char *quoteChar(char c);
+
+// debug.cpp
+char* ty2s(Type *tp);
+char* node2s(Node *node);
+char* tk2s(Token *tk);
+
+// dict.cpp
+Dict* makeDict();
+Type* dictGet(Dict*, char*);
+void dictPut(Dict*, char*, Type*);
+std::vector<char*, Type*>* dictKeys(Dict*);
 
 //file.cpp
 File *makeFile(FILE *file, char *name);
@@ -353,7 +428,7 @@ void streamUnstash(void);
 
 //lex.cpp
 void lexInit(char *filename);
-bool isKeyword(Token &tk, int c);
+bool isKeyword(Token *tk, int c);
 void tokenBufferStash(std::vector<Token*> *buf);
 void tokenBufferUnstash();
 void ungetToken(Token *tk);
@@ -369,9 +444,9 @@ extern bool w_e;
 #define STR2(x) #x
 #define STR(x) STR2(x)
 #define error(...)       errorf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
-#define errort(tok, ...) errorf(__FILE__ ":" STR(__LINE__), token_pos(tok), __VA_ARGS__)
+#define errort(tok, ...) errorf(__FILE__ ":" STR(__LINE__), tokenPos(tok), __VA_ARGS__)
 #define warn(...)        warnf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
-#define warnt(tok, ...)  warnf(__FILE__ ":" STR(__LINE__), token_pos(tok), __VA_ARGS__)
+#define warnt(tok, ...)  warnf(__FILE__ ":" STR(__LINE__), tokenPos(tok), __VA_ARGS__)
 
 [[noreturn]] void errorf(const char *line, const char *pos, const char *fmt, ...);
 void warnf(const char *line, const char *pos, const char *fmt, ...);

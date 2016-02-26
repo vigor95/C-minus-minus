@@ -48,6 +48,8 @@ struct Case {
     int beg;
     int end;
     char *label;
+    Case() = default;
+    Case(int b, int e, char *l): beg(b), end(e), label(newChar(l)) {}
 };
 
 enum {
@@ -65,8 +67,46 @@ enum {
     DECL_CAST
 };
 
+static Type* makePtrType(Type *tp);
+static Type* makeArraytype(Type *tp, int size);
+
 void mapInsert(mmap *m, char *key, Node *val) {
     m->insert(std::pair<char*, Node*>(key, val));
+}
+
+Token* readToken() {
+    return lex();
+}
+
+Token* peekToken() {
+    Token *r = readToken();
+    ungetToken(r);
+    return r;
+}
+
+static Token* peek() {
+    return peekToken();
+}
+
+static void linkString(Token *tk) {
+    Buffer *b = makeBuffer();
+    bufAppend(b, tk->sval, tk->slen - 1);
+    while (peek()->kind == TSTRING) {
+        Token *tmp = lex();
+        bufAppend(b, tmp->sval, tmp->slen - 1);
+    }
+    bufWrite(b, '\0');
+    tk->sval = bufBody(b);
+    tk->slen = bufLen(b);
+}
+
+static Token* get() {
+    Token *r = lex();
+    if (r->kind == TINVALID)
+        errort(r, "stray character in program: '%c'", r->c);
+    if (r->kind == TSTRING && peek()->kind == TSTRING)
+        linkString(r);
+    return r;
 }
 
 static void markLocation() {
@@ -92,11 +132,7 @@ static char* makeStaticLabel(char *name) {
 }
 
 static Case* makeCase(int beg, int end, char *label) {
-    Case *r = new Case;
-    r->beg = beg;
-    r->end = end;
-    r->label = label;
-    return r;
+    return new Case(beg, end, label);
 }
 
 static mmap* env() {
@@ -111,39 +147,27 @@ static Node* makeAst(Node *tmp) {
 }
 
 static Node* astUop(int kind, Type *tp, Node *operand) {
-    Node *r = new Node(kind, tp);
-    r->setOperand(operand);
-    return makeAst(r);
-    //return makeAst(new Node(kind, tp, operand));
+    return makeAst(new Node{.kind = kind, .tp = new Type(*tp),
+            .operand = new Node(*operand)});
 }
 
 static Node* astBinop(Type *tp, int kind, Node *left, Node *right) {
-    Node *r = makeAst(new Node(kind, tp));
-    r->setLeft(left);
-    r->setRight(right);
-    //r->left = left;
-    //r->right = right;
+    Node *r = makeAst(new Node{kind, tp});
+    r->left = new Node(*left);
+    r->right = new Node(*right);
     return r;
 }
 
 static Node* astInitType(Type* tp, long val) {
-    Node *r = new Node(AST_LITERAL, tp);
-    r->setIval(val);
-    return makeAst(r);
-    //return makeAst(new Node(AST_LITERAL, tp, val));
+    return makeAst(new Node{AST_LITERAL, tp, .ival = val});
 }
 
 static Node* astFloattype(Type *tp, double val) {
-    Node *r = new Node(AST_LITERAL, tp);
-    r->setFval(val);
-    return makeAst(r);
+    return makeAst(new Node{AST_LITERAL, tp, .fval = val});
 }
 
 static Node* astLvar(Type *tp, char *name) {
-    Node *r = new Node(AST_LVAR, tp);
-    r->setVarname(name);
-    r = makeAst(r);
-    //Node *r = makeAst(new Node(AST_LVAR, tp, name));
+    Node *r = makeAst(new Node{AST_LVAR, tp, .varname = name});
     if (localenv) {
         mapInsert(localenv, name, r);
     } 
@@ -152,179 +176,134 @@ static Node* astLvar(Type *tp, char *name) {
 }
 
 static Node* astGvar(Type *tp, char *name) {
-    Node *r = new Node(AST_GVAR, tp);
-    r->setGlabel(name);
-    r->setVarname(name);
-    r = makeAst(r);
+    Node *r = new Node{AST_GVAR, tp, .varname = newChar(name),
+        .glabel = newChar(name)};
     mapInsert(globalenv, name, r);
     return r;
 }
 
 static Node* astStaticLvar(Type *tp, char *name) {
-    Node *r = new Node(AST_GVAR, tp);
-    r->setVarname(name);
-    r->setGlabel(makeStaticLabel(name));
-    r = makeAst(r);
+    Node *r = makeAst(new Node{AST_GVAR, new Type(*tp),
+            .varname = newChar(name), .glabel = makeStaticLabel(name)});
     assert(localenv);
     mapInsert(localenv, name, r);
     return r;
 }
 
 static Node* astTypedef(Type *tp, char *name) {
-    Node *r = new Node(AST_TYPEDEF, tp);
-    r = makeAst(r);
+    Node *r = makeAst(new Node{AST_TYPEDEF, new Type(*tp)});
     mapInsert(env(), name, r);
     return r;
 }
 
 static Node* astString(char *str, int len) {
     Type *tp = makeArraytype(type_char, len);
-    Node *r = new Node(AST_LITERAL, tp);
-    r->setSval(str);
-    return makeAst(r);
+    return makeAst(new Node{AST_LITERAL, new Type(*tp),
+            .sval = newChar(str)});
 }
 
 static Node* astFuncall(Type *ftype, char *fname) {
-    Node *r = new Node(AST_FUNCALL, ftype->rettype);
-    r->setFname(fname);
-    //r->setArgs(args);
-    r->setFtype(ftype);
-    return makeAst(r);
+    return makeAst(new Node{AST_FUNCALL, new Type(*ftype->rettype),
+        .fname = newChar(fname), .ftype = new Type(*ftype)});
 }
 
 static Node* astFuncdesg(Type *tp, char *fname) {
-    Node *r = new Node(AST_FUNCDESG, tp);
-    r->setFname(fname);
-    return makeAst(r);
+    return makeAst(new Node{AST_FUNCDESG, new Type(*tp),
+            .fname = newChar(fname)});
 }
 
 static Node* astFuncptrcall(Node *fptr) {
     assert(fptr->tp->kind == KIND_PTR);
     assert(fptr->tp->ptr->kind == KIND_FUNC);
-    Node *r = new Node(AST_FUNCPTR_CALL, fptr->tp->ptr->rettype);
-    r->setFptr(fptr);
-    //r->setArgs(args);
-    return makeAst(r);
+    return makeAst(new Node{AST_FUNCPTR_CALL,
+            new Type(*fptr->tp->ptr->rettype),
+            .fptr = new Node(*fptr)});
 }
 
 static Node* astFunc(Type *tp, char *fname, Node *body) {
-    Node *r = new Node(AST_FUNC, tp);
-    r->setFname(fname);
-    //r->setParams(params);
-    //r->setLocalvars(localvars);
-    r->setBody(body);
-    return makeAst(r);
+    return makeAst(new Node{AST_FUNC, new Type(*tp),
+            .fname = newChar(fname), .body = new Node(*body)});
 }
-
 static Node* astDecl(Node *var) {
-    Node *r = new Node(AST_DECL);
-    r->setDeclvar(var);
-    //r->setDeclinit(init);
-    return makeAst(r);
+    return makeAst(new Node{AST_DECL, .declvar = new Node(*var)});
 }
 
 static Node* astInit(Node *val, Type *totype, int off) {
-    Node *r = new Node(AST_INIT);
-    r->setInitval(val);
-    r->initoff = off;
-    r->setTotype(totype);
-    return makeAst(r);
+    return makeAst(new Node{AST_INIT, .initval = new Node(*val),
+            .initoff = off, .totype = new Type(*totype)});
 }
 
 static Node* astConv(Type *totype, Node *val) {
-    Node *r = new Node(AST_CONV);
-    r->setTotype(totype);
-    r->setOperand(val);
-    return makeAst(r);
+    return makeAst(new Node{AST_CONV, new Type(*totype),
+            .operand = new Node(*val)});
 }
 
 static Node* astIf(Node *cond, Node *then, Node *els) {
-    Node *r = new Node(AST_IF);
-    //r->setCond(cond);
-    //r->setThen(then);
-    //r->setEls(els);
-    return makeAst(r);
+    return makeAst(new Node{AST_IF, .cond = new Node(*cond),
+            .then = new Node(*then), .els = new Node(*els)});
 }
 
 static Node* astTernary(Type *tp, Node *cond, Node *then, Node *els) {
-    Node *r = new Node(AST_TERNARY, tp);
-    //r->setCond(cond);
-    //r->setThen(then);
-    //r->setEls(els);
-    return makeAst(r);
+    return makeAst(new Node{AST_TERNARY, new Type(*tp),
+            .cond = new Node(*cond), .then = new Node(*then),
+            .els = new Node(*els)});
 }
 
 static Node* astReturn(Node *retval) {
-    Node *r = new Node(AST_RETURN);
-    //r->setRetval(retval);
-    return makeAst(r);
+    return makeAst(new Node{AST_RETURN, .retval = new Node(*retval)});
 }
 
 static Node* astCompoundstmt() {
-    Node *r = new Node(AST_COMPOUND_STMT);
-    //r->setStmts(stmts);
-    return makeAst(r);
+    return makeAst(new Node{AST_COMPOUND_STMT});
 }
 
 static Node* astStructref(Type *tp, Node *struc, char *name) {
-    Node *r = new Node(AST_STRUCT_REF, tp);
-    //r->setStruc(struc);
-    //r->setField(name);
-    return makeAst(r);
+    return makeAst(new Node{AST_STRUCT_REF, new Type(*tp),
+            .struc = new Node(*struc), .field = newChar(name)});
 }
 
 static Node* astGoto(char *label) {
-    Node *r = new Node(AST_GOTO);
-    r->setLabel(label);
-    return makeAst(AST_GOTO, label);
+    return makeAst(new Node{AST_GOTO, .label = newChar(label)});
 }
 
 static Node* astJump(char *label) {
-    Node *r = new Node(AST_GOTO);
-    r->setLabel(label);
-    r->setNewlabel(label);
-    return makeAst(r);
+    return makeAst(new Node{AST_GOTO, .label = newChar(label),
+            .newlabel = newChar(label)});
 }
 
 static Node* astComputedgoto(Node *expr) {
-    Node *r = new Node(AST_COMPUTED_GOTO);
-    r->setOperand(expr);
-    return makeAst(r);
+    return makeAst(new Node{AST_COMPUTED_GOTO,
+            .operand = new Node(*expr)});
 }
 
 static Node* astLabel(char *label) {
-    Node *r = new Node(AST_LABEL);
-    r->setLabel(label);
-    return makeAst(r);
+    return makeAst(new Node{AST_LABEL, .label = newChar(label)});
 }
 
 static Node* astDest(char *label) {
-    Node *r = new Node(AST_LABEL);
-    r->setLabel(label);
-    r->setNewlabel(label);
-    return makeAst(r);
+    return makeAst(new Node{AST_LABEL, .label = newChar(label),
+            .newlabel = newChar(label)});
 }
 
 static Node* astLabeladdr(char *label) {
-    Node *r = new Node(OP_LABEL_ADDR, makePtrType(type_void));
-    r->setLabel(label);
-    return makeAst(r);
+    return makeAst(new Node{OP_LABEL_ADDR, makePtrType(type_void),
+            .label = newChar(label)});
 }
 
 static Type* makeType(Type *tmpl) {
-    Type *r = new Type;
-    *r = *tmpl;
-    return r;
+    return new Type(*tmpl);
 }
 
 static Type* copyType(Type *tp) {
     Type *r = new Type;
-    *r = *tp;
+    memcpy(r, tp, sizeof(Type));
     return r;
 }
 
 static Type* makeNumtype(int kind, bool usig) {
-    Type *r = new Type(kind, usig);
+    Type *r = new Type;
+    r->kind = kind;
+    r->usig = usig;
     int sz = 0;
     if (kind == KIND_VOID) sz = 0;
     else if (kind == KIND_BOOL) sz = 1;
@@ -348,12 +327,7 @@ static Type *makePtrType(Type *tp) {
 static Type* makeArraytype(Type *tp, int len) {
     int sz = -1;
     if (len >= 0) sz = tp->size * len;
-    Type *r = new Type(KIND_ARRAY);
-    r->ptr = tp;
-    r->len = len;
-    r->size = sz;
-    r->align = tp->align;
-    return makeType(r);
+    return makeType(new Type(KIND_ARRAY, tp, sz, len, tp->align));
 }
 
 static Type* makeRectype(bool is_struct) {
@@ -364,8 +338,8 @@ static Type* makeRectype(bool is_struct) {
 
 static Type* makeFunctype(Type *rettype, bool has_varargs, bool oldstyle) {
     Type *r = new Type(KIND_FUNC);
-    r->rettype = rettype;
-    r->params = paramtypes;
+    r->rettype = new Type(*rettype);
+    //r->params = paramtypes;
     r->hasva = has_varargs;
     r->oldstyle = oldstyle;
     return makeType(r);
@@ -377,8 +351,8 @@ static Type* makeStubtyoe() {
 
 bool isInittype(Type *tp) {
     switch (tp->kind) {
-        case KIND_BOOL: case KIND_CHAR, case KIND_SHORT:
-        case KIND_LONG: case KIND_INT, case KIND_LLONG:
+        case KIND_BOOL: case KIND_CHAR: case KIND_SHORT:
+        case KIND_LONG: case KIND_INT: case KIND_LLONG:
             return 1;
         default: return 0;
     }
@@ -397,7 +371,7 @@ static bool isArithtype(Type *tp) {
 }
 
 static bool isString(Type *tp) {
-    return tp->kind = KIND_ARRAY && tp->ptr->kind = KIND_CHAR;
+    return tp->kind == KIND_ARRAY && tp->ptr->kind == KIND_CHAR;
 }
 
 static void ensureLvalue(Node *node) {
@@ -413,7 +387,7 @@ static void ensureInittype(Node *node) {
         error("integer type expected, but got %s", node2s(node));
 }
 
-static void ensureArithtype)Node *node {
+static void ensureArithtype(Node *node) {
     if (!isArithtype(node->tp))
         error("arithmetic type expected, but got %s", node2s(node));
 }
@@ -426,7 +400,7 @@ static void ensureNotvoid(Type *tp) {
 static void expect(char id) {
     Token *tk = get();
     if (!isKeyword(tk, id))
-        errort(tk, "'%c' expected, but got %s", id, tok2s(tk));
+        errort(tk, "'%c' expected, but got %s", id, tk2s(tk));
 }
 
 static Type* copyIncompletetype(Type *tp) {
@@ -435,7 +409,7 @@ static Type* copyIncompletetype(Type *tp) {
 }
 
 static Type* getTypedef(char *name) {
-    Node *node;
+    Node *node = env()->find(name)->second;
     return (node && node->kind == AST_TYPEDEF) ? node->tp : NULL;
 }
 
@@ -470,7 +444,7 @@ static Node* conv(Node *node) {
         case KIND_SHORT: case KIND_CHAR: case KIND_BOOL:
             return astConv(type_int, node);
         case KIND_INT:
-            if (tp->bitsize > 0) return ast(type_int, node);
+            if (tp->bitsize > 0) return astConv(type_int, node);
     }
     return node;
 }
@@ -511,20 +485,20 @@ static bool validPointbinop(int op) {
 }
 
 static Node* binop(int op, Node *lhs, Node *rhs) {
-    if (lhs->td->kind == KIND_PTR && rhs->td->kind == KIND_PTR) {
+    if (lhs->tp->kind == KIND_PTR && rhs->tp->kind == KIND_PTR) {
         if (!validPointbinop(op))
             error("invalid pointer arith");
         if (op == '-')
             return astBinop(type_long, op, lhs, rhs);
         return astBinop(type_int, op, lhs, rhs);
     }
-    if (lhs->td->kind == KIND_PTR)
-        return astBinop(lhs->td, op, lhs, rhs);
-    if (rhs->td->kind == KIND_PTR)
-        return astBinop(rhs->ty, op, rhs, lhs);
-    assert(isArithtype(lhs->td));
-    assert(isArithtype(rhs->td));
-    Type *r = usualArithconv(lhs->td, rhs->td);
+    if (lhs->tp->kind == KIND_PTR)
+        return astBinop(lhs->tp, op, lhs, rhs);
+    if (rhs->tp->kind == KIND_PTR)
+        return astBinop(rhs->tp, op, rhs, lhs);
+    assert(isArithtype(lhs->tp));
+    assert(isArithtype(rhs->tp));
+    Type *r = usualArithconv(lhs->tp, rhs->tp);
     return astBinop(r, op, wrap(r, lhs), wrap(r, rhs));
 }
 
@@ -537,6 +511,12 @@ static bool isSameStruct(Type *a, Type *b) {
             return isSameStruct(a->ptr, b->ptr);
         case KIND_STRUCT: {
             if (a->isstruct != b->isstruct) return 0;
+            std::vector<Type*> *ka = dictKeys(a->fields);
+            std::vector<Type*> *kb = dictKeys(b->fields);
+            if (ka->size() != kb->size()) return 0;
+            for (unsigned i = 0; i < ka->size(); i++)
+                if (!isSameStruct((*ka)[i], (*kb)[i]))
+                    return 0;
             return 1;
         }
         defalut: return 1;
@@ -667,6 +647,161 @@ static Node* readNumber(Token *tk) {
     bool isfloat = strpbrk(s, ".pP") ||
         (strncasecmp(s, "0x", 2) && strpbrk(s, "eE"));
     return isfloat ? readFloat(tk) : readInt(tk);
+}
+
+/*
+ * sizeof operator
+ */
+
+static Type* readSizeofOperandSub() {
+    Token *tk = get();
+    if (isKeyword(tk, '(') && isType(peek())) {
+        Type *r = readCastType();
+        expect('()');
+        return r;
+    }
+    ungetToken(tk);
+    return readUnaryExpr()->tp;
+}
+
+static Node* readSizeofOperand() {
+    Type *tp = readSizeofOperandSub();
+    int sz = (tp->kind == KIND_VOID || tp->kind == KIND_FUNC)
+        ? 1 : tp->size;
+    assert(sz >= 0);
+    return astInitType(type_ulong, sz);
+}
+/*
+ * alignof op
+ */
+
+static Node* readAlignofOperand() {
+    expect('(');
+    Type *tp = readCastType();
+    expect(')');
+    return astInitType(type_ulong, tp->align);
+}
+
+/*
+ * function args
+ */
+
+static readFuncArgs(std::vector<Node*> *params) {
+    std::vector<Node*> *args = new std::vector<Node*>;
+    int i = 0;
+    while (1) {
+        if (nextToken(')')) break;
+        Node *arg = conv(readAssignmentExpr());
+        Type *paramtype;
+        if (i < params->size()) paramtype = (*params)[i++];
+        else {
+            paramtype = isFlotype(arg->tp) ? type_double :
+                isInittype(arg->tp) ? type_int : arg->tp;
+        }
+        ensureAssignable(paramtype, arg->tp);
+        if (paramtype->kind != arg->tp->kind)
+            arg = astConv(paramtype, arg);
+        args->push_back(arg);
+        Token *tk = get();
+        if (isKeyword(tk, ')')) break;
+        if (!isKeyword(tk, ','))
+            errort(tk, "unexpected token: '%s'", tk2s(tk));
+    }
+    return args;
+}
+
+static Node* readFuncall(Node *fp) {
+    if (fp->kind = AST_ADDR && fp->operand->kind == AST_FUNCDESG) {
+        Node *desg = fp->operand;
+        auto args = readFuncArgs(desg->tp->params);
+        return astFuncall(desg->tp, desg->fname, args);
+    }
+}
+
+/*
+ * expression
+ */
+
+static Node* readVarOrFunc(char *name) {
+    Node *v = env()->find(name)->second;
+    if (!v) {
+        Token *tk = peek();
+        if (!isKeyword(tk, '()'))
+            errort(tk, "undefined variable: %s", name);
+        Type *tp = makeFunctype(type_int, 1, 0);
+        warnt(tk, "assume returning int: %s()", name);
+        return astFuncdesg(tp, name);
+    }
+    if (v->tp->kind == KIND_FUNC)
+        return astFuncdesg(v->tp, name);
+    return v;
+}
+
+static int getCompoundAssignOp(Token *tk) {
+    if (tk->kind != TKEYWORD) return 0;
+    switch (tk->id) {
+        case OP_A_AND: return '+';
+        case OP_A_SUB: return '-';
+        case OP_A_MUL: return '*';
+        case OP_A_DIV: return '/';
+        case OP_A_MOD: return '%';
+        case OP_A_AND: return '&';
+        case OP_A_OR:  return '|';
+        case OP_A_XOR: return '^';
+        case OP_A_SAL: return OP_SAL;
+        case OP_A_SAR: return OP_SAR;
+        case OP_A_SHR: return OP_SHR;
+        default: return 0;
+    }
+}
+
+static Node* readStmtExpr() {
+    Node *r = readCompoundStmt();
+    expect(')');
+    Type *rtype = type_void;
+    if (r->stmts->size() > 0) {
+        Node *lastexpr = (*r->stmts)[r->stmts->size()-1];
+        if (lastexpr->tp) rtype = lastexpr->tp;
+    }
+    r->tp = rtype;
+    return r;
+}
+
+static Type* charType() {
+    return type_int;
+}
+
+static Node* readPrimaryExpr() {
+    Token *tk = get();
+    if (!tk) return NULL;
+    if (isKeyword(tk, '(')) {
+        if (nextToken('{'))
+            return readStmtExpr();
+        Node *r = readExpr();
+        expect(')');
+        return r;
+    }
+    switch (tk->kind) {
+        case TIDENT: return readVarOrFunc(tk->sval);
+        case TNUMBER: return readNumber(tk);
+        case TCHAR: return astInitType(charType(), tk->c);
+        case TSTRING: return astString(tk->sval, tk->slen);
+        case TKEYWORD:
+            ungetToken(tk);
+            return NULL;
+        default:
+            error("internal error: unknown token kind: %d", tk->kind);
+    }
+}
+
+static Node* readSubscriptExpr(Node *node) {
+    Token *tk = peek();
+    Node *sub = readExpr();
+    if (!sub)
+        errort(tk, "subscription expected");
+    expect(']');
+    Node *t = binop('+', conv(node), conv(sub));
+    return astUop(AST_DEREF, t->tp->ptr, t);
 }
 
 static Node* astGvar(Type *tp, char *name) {

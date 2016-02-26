@@ -340,8 +340,8 @@ static bool bufferEmpty() {
     return buffers->size() == 1 && (*buffers)[0]->size() == 0;
 }
 
-bool isKeyword(Token &tk, int c) {
-    return tk.kind == TKEYWORD && tk.id == c;
+bool isKeyword(Token *tk, int c) {
+    return tk->kind == TKEYWORD && tk->id == c;
 }
 
 void tokenBufferStash(std::vector<Token*> *buf) {
