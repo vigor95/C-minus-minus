@@ -17,7 +17,10 @@ mmap *tags = new mmap;
 mmap *labels = new mmap;
 
 typedef std::vector<Node*> nodevec;
+nodevec *toplevels;
 nodevec *localvars;
+nodevec *gotos;
+nodevec *cases;
 
 //static Map *globalenv = new Map;
 //static Map *localenv;
@@ -121,7 +124,7 @@ char* makeTempname() {
     return format("@T%d", num++);
 }
 
-char* makeLable() {
+char* makeLabel() {
     static int num = 0;
     return format("@L%d", num++);
 }
@@ -802,6 +805,472 @@ static Node* readSubscriptExpr(Node *node) {
     expect(']');
     Node *t = binop('+', conv(node), conv(sub));
     return astUop(AST_DEREF, t->tp->ptr, t);
+}
+
+static Node* readPostfixExprTail(Node *node) {
+    if (!node) return NULL;
+    while (1) {
+        if (nextToken('(')) {
+            Token *tk = peek();
+            node = conv(node);
+            Type *tp = node->tp;
+            if (tp->kind != KIND_PTR || tp->ptr->kind != KIND_FUNC)
+                errort(tk, "function expected, but got %s", node2s(node));
+            node = readFuncall(node);
+            continue;
+        }
+        if (nextToken('[')) {
+            node = readSubscriptExpr(node);
+            continue;
+        }
+        if (nextToken('.')) {
+            node = readStructField(node);
+            continue;
+        }
+        if (nextToken(OP_ARROW)) {
+            if (node->tp->kind != KIND_PTR)
+                error("pointer type expected, but got %s %s",
+                        tp2s(node->tp), node2s(node));
+            node = astUop(AST_DEREF, node->tp->ptr, node);
+            node = readStructField(node);
+            continue;
+        }
+        Token *tk = peek();
+        if (nextToken(OP_INC) || nextToken(OP_DEC)) {
+            ensureLvalue(node);
+            int op = isKeyword(tk, OP_INC) ? OP_POST_INC : OP_POST_DEC;
+            return astUop(op, node->tp, node);
+        }
+        return node;
+    }
+}
+
+static Node* readPostfixExpr() {
+    Node *node = readPrimaryExpr();
+    return readPostfixExprTail(node);
+}
+
+static Node* readUnaryIncdec(int op) {
+    Node *operand = readUnaryExpr();
+    operand = conv(operand);
+    ensureLvalue(operand);
+    return astUop(op, operand->tp, operand);
+}
+
+static Node* readLabelAddr(Token *tk) {
+    Token *tk = get();
+    if (tk->kind != TIDENT)
+        errort(tk, "label name expected after &&, but got %s", tk2s(tk));
+    Node *r = astLabeladdr(tk->sval);
+    gotos->push_back(r);
+    return r;
+}
+
+static Node* readUnaryAddr() {
+    Node *operand = readCastExpr();
+    if (operand->kind == astFuncdesg)
+        return conv(operand);
+    ensureLvalue(operand);
+    return astUop(AST_ADDR, makePtrType(operand->tp), operand);
+}
+
+static Node* readUnaryDeref(Token *tk) {
+    Node *operand = conv(readCastExpr());
+    if (operand->tp->kind != KIND_PTR)
+        errort(tk, "pointer type expected, but got %s", node2s(operand));
+    if (operand->tp->ptr->kind == KIND_FUNC)
+        return operand;
+    return astUop(AST_DEREF, operand->tp->ptr, operand);
+}
+
+static Node* readUnaryMinus() {
+    Node* expr = readCastExpr();
+    ensureArithtype(expr);
+    if (isInittype(expr->tp))
+        return binop('-', conv(astInitType(expr->tp, 0)), conv(expr));
+    return binop('-', astFloattype(expr->tp, 0), expr);
+}
+
+static Node* readUnaryBitnot(Token *tk) {
+    Node *expr = readCastExpr();
+    expr = conv(expr);
+    if (!isInittype(expr->tp))
+        errort(tk, "invalid use of ~: %s", node2s(expr));
+    return astUop('~', expr->tp, expr);
+}
+
+static Node* readUnaryLognot() {
+    Node *operand = readCastExpr();
+    operand = conv(operand);
+    return astUop('!', type_int, operand);
+}
+
+static Node* readUnaryExpr() {
+    Token *tk = get();
+    if (tk->kind == TKEYWORD) {
+        switch (tk->id) {
+            case KSIZEOF: return readSizeofOperand();
+            case KALIGNOF: return readAlignofOperand();
+            case OP_INC: return readUnaryIncdec(OP_PRE_INC);
+            case OP_DEC: return readUnaryIncdec(OP_PRE_DEC);
+            case OP_LOGAND: return readLabelAddr(tk);
+            case '&': return readUnaryAddr();
+            case '*': return readUnaryDeref(tk);
+            case '+': return readCastExpr();
+            case '-': return readUnaryMinus();
+            case '~': return readUnaryBitnot(tk);
+            case '!': return readUnaryLognot();
+        }
+    }
+    ungetToken(tk);
+    return readPostfixExpr();
+}
+
+static Node* readCompoundLiteral(Type *tp) {
+    char *name = makeLabel();
+    readDeclInit(tp);
+    Node *r = astLvar(tp, name);
+    r->lvarinit = init;
+    return r;
+}
+
+static Type* readCastType() {
+    return readAbstractDecl(readDeclSpec(NULL));
+}
+
+static Node* readCastExpr() {
+    Token *tk = get();
+    if (isKeyword(tk, '(' && isType(peek()))) {
+        Type *tp = readCastType();
+        expect(')');
+        if (isKeyword(peek(), '{')) {
+            Node *node = readCompoundLiteral(tp);
+            return readPostfixExprTail(node);
+        }
+        return astUop(OP_CAST, tp, readCastExpr());
+    }
+    ungetToken(tk);
+    return readUnaryExpr();
+}
+
+static Node* readMultiExpr() {
+    Node *node = readCastExpr();
+    while (1) {
+        if (nextToken('*')) 
+            node = binop('*', conv(node), conv(readCastExpr()));
+        else if (nextToken('/'))
+            node = binop('/', conv(node), conv(readCastExpr()));
+        else if (nextToken('%'))
+            node = binop('%', conv(node), conv(readCastExpr()));
+        else return node;
+    }
+}
+
+static Node* readAddiExpr() {
+    Node *node = readMultiExpr();
+    while (1) {
+        if (nextToken('+'))
+            node = binop('+', conv(node), conv(readMultiExpr()));
+        else if (nextToken('-'))
+            node = binop('-', conv(node), conv(readMultiExpr()));
+        else return node;
+    }
+}
+
+static Node* readShiftExpr() {
+    Node *node = readAddiExpr();
+    while (1) {
+        int op;
+        if (nextToken(OP_SAL)) op = OP_SAL;
+        else if (nextToken(OP_SAR))
+            op = node->tp->usig ? OP_SHR ? OP_SAR;
+        else break;
+        Node *right = readAddiExpr();
+        ensureInittype(node);
+        ensureInittype(right);
+        node = astBinop(node->tp, op, conv(node), conv(right));
+    }
+    return node;
+}
+
+static Node* readRelationExpr() {
+    Node *node = readShiftExpr();
+    while (1) {
+        if (nextToken('<'))
+            node = binop('<', conv(node), conv(readShiftExpr()));
+        else if (nextToken('>'))
+            node = binop('>', conv(readShiftExpr()), conv(node));
+        else if (nextToken(OP_LE))
+            node = binop(OP_LE, conv(node), conv(readShiftExpr()));
+        else if (nextToken(OP_GE))
+            node = binop(OP_LE, conv(readShiftExpr()), conv(node));
+        else return node;
+        node->tp = type_int;
+    }
+}
+
+static Node* readEqualityExpr() {
+    Node *node = readRelationExpr();
+    Node *r;
+    if (nextToken(OP_EQ))
+        r = binop(OP_EQ, conv(node), conv(readEqualityExpr()));
+    else if (nextToken(OP_NE))
+        r = binop(OP_NE, conv(node), conv(readEqualityExpr()));
+    else return node;
+    r->tp = type_int;
+    return r;
+}
+
+static Node* readBitandExpr() {
+    Node *node = readEqualityExpr();
+    while (nextToken('&'))
+        node = binop('&', conv(node), conv(readEqualityExpr()));
+    return node;
+}
+
+static Node* readBitxorExpr() {
+    Node *node = readBitandExpr();
+    while (nextToken('^'))
+        node = binop('^', conv(node), conv(readBitandExpr()));
+    return node;
+}
+
+static Node* readBitorExpr() {
+    Node *node = readBitorExpr();
+    while (nextToken('|'))
+        node = binop('|', conv(node), conv(readBitxorExpr()));
+    return node;
+}
+
+static Node* readLogandExpr() {
+    Node *node = readBitorExpr();
+    while (nextToken(OP_LOGAND))
+        node = astBinop(type_int, OP_LOGAND, node, readBitorExpr());
+    return node;
+}
+
+static Node* readLogorExpr() {
+    Node *node = readLogandExpr();
+    while (nextToken(OP_LOGOR))
+        node = astBinop(type_int, OP_LOGOR, node, readLogandExpr());
+    return node;
+}
+
+static Node* doReadConditionExpr(Node *cond) {
+    Node *then = conv(readCommaExpr());
+    expect(':');
+    Node *els = conv(readConditionExpr());
+    Type *t = then ? then->tp : cond->tp;
+    Type *u = els->tp;
+    if (isArithtype(t) && isArithtype(u)) {
+        Type *r = usualArithconv(t, u);
+        return astTernary(r, cond, (then ? wrap(r, then) : NULL),
+                wrap(r, els));
+    }
+    return astTernary(u, cond, then, els);
+}
+
+static Node* readConditionExpr() {
+    Node *cond = readLogorExpr();
+    if (!nextToken('?')) return cond;
+    return doReadConditionExpr(cond);
+}
+
+static Node* readAssignmentExpr() {
+    Node *node = readLogorExpr();
+    Token *tk = get();
+    if (!tk) return tk;
+    if (isKeyword(tk, '?'))
+        return doReadConditionExpr(node);
+    int cop = getCompoundAssignOp(tk);
+    if (isKeyword(tk, '=') || cop) {
+        Node *value = conv(readAssignmentExpr());
+        if (isKeyword(tk, '=') || cop)
+            ensureLvalue(node);
+        Node *right = cop ? binop(cop, conv(node), value) : value;
+        if (isArithtype(node->tp) && node->tp->kind != right->tp->kind)
+            right = astBinop(node->tp, '=', node, right);
+    }
+    ungetToken(tk);
+    return node;
+}
+
+static Node* readCommaExpr() {
+    Node *node = readAssignmentExpr();
+    while (nextToken(',')) {
+        Node *expr = readAssignmentExpr();
+        node = astBinop(expr->tp, ',', node, expr);
+    }
+    return node;
+}
+
+Node* readExpr() {
+    Token *tk = peek();
+    Node *r = readCommaExpr();
+    if (!r) errort(tk, "expression expected");
+    return r;
+}
+
+static Node* readExprOpt() {
+    return readCommaExpr();
+}
+
+/*
+ * struct or union
+ */
+
+static Node* readStructField(Node *struc) {
+    if (struc->tp->kind != KIND_STRUCT)
+        error("struct expected, but got %s", node2s(struc));
+    Token *name = get();
+    if (name->kind != TIDENT)
+        error("field name expected, but got %s", tk2s(name));
+    Type *field = dictGet(struc->tp->fields, name->sval);
+    if (!field)
+        error("struct has no such field: %s", tk2s(name));
+    return astStructref(field, struc, name->sval);
+}
+
+static char* readRectypeTag() {
+    Token *tk = get();
+    if (tk->kind == TIDENT) retuen tk->sval;
+    ungetToken(tk);
+    return NULL;
+}
+
+static int computePadding(int offset, int align) {
+    return (offset % align == 0) ? 0 : align - offset % align;
+}
+
+static void squashUnnamedStruct(Dict *dc, Type *unnamed, int offset) {
+    std::vector<char*> *keys = dictKeys(unnamed->fields);
+    for (unsigned i = 0; i < keys->size(); i++) {
+        char *name = (*keys)[i];
+        Type *t = copyType(dictGet(unnamed->fields, name));
+        t->offset += offset;
+        dictPut(dc, name, t);
+    }
+}
+
+static int readBitsize(char *name, Type *tp) {
+    if (isInittype(tp))
+        error("non-integer type cannot be a bitfield: %s", tp2s(tp));
+    Token *tk == peek();
+    int r = readIntexpr();
+    int maxsize = tp->kind == KIND_BOOL ? 1 : tp->size * 8;
+    if (r < 0 || maxsize < r)
+        errort(tk, "invalid bitfield size for %s: %d", tp2s(tp), r);
+    if (r == 0 && name != NULL)
+        errort(tk, "zero-width bitfield needs to be unnamed: %s", name);
+    return r;
+}
+
+static std::vector<std::pair<char*, Type*>* > readRectypeFieldsSub() {
+    std::vector<std::pair<char*, Type*>* > *r;
+    while (1) {
+        if (!isType(peek())) break;
+        Type *basetype = readDeclSpec(NULL);
+        if (basetype->kind == KIND_STRUCT && nextToken(';')) {
+            r->push_back(new std::pair<char*, Type*>(NULL, basetype));
+            continue;
+        }
+    }
+    expect('}');
+    return r;
+}
+
+static void fixRectypeFlexibleMember(std::vector<std::pair<char*,
+        Type*>* > *fields) {
+    for (unsigned i = 0; i < fields->size(); i++) {
+        std::pair<char*, Type*> *pp = (*fields)[i];
+        char *name = pp->first;
+        Type *tp = pp->second;
+        if (tp->kind != KIND_ARRAY) continue;
+        if (tp->len == -1) {
+            if (i != fields->size() - 1)
+                error("flexible member may only appear as the last
+                        member: %s %s", tp2s(tp));
+            if (fields->size() == 1)
+                error("flexible member with no other fields: %s %s",
+                        tp2s(tp), name);
+            tp->len = 0;
+            tp->size = 0;
+        }
+    }
+}
+
+static void finishBitfield(int *off, int *bitoff) {
+    *off += (*bitoff + 7) / 8;
+    *bitoff = 0;
+}
+
+static Dict* updateStructOffset(int *rsize, int *align, std::vector<
+        std::pair<char*, Type*>* > *fields) {
+    int off = 0, bitoff = 0;
+    Dict *r = makeDict();
+    for (unsigned i = 0; i < fields->size(); i++) {
+        std::pair<char*, Type*> *pp = (*fields)[i];
+        char *name = pp->first;
+        Type *fieldtype = pp->second;
+        if (name) *align = std::max(*align, fieldtype->align);
+        if (name == NULL && fieldtype->kind == KIND_STRUCT) {
+            finishBitfield(&off, &bitoff);
+            off += computePadding(r, fieldtype->align);
+            squashUnnamedStruct(r, fieldtype, off);
+            off += fieldtype->size;
+            continue;
+        }
+        if (fieldtype->bitsize == 0) {
+            finishBitfield(&off, &bitoff);
+            off += computePadding(off, fieldtype->align);
+            bitoff = 0;
+            continue;
+        }
+        if (fieldtype->bitsize > 0) {
+            int bit = fieldtype->size * 8;
+            int room = bit - (off * 8 + bitoff) % bit;
+            if (fieldtype->bitsize <= room) {
+                fieldtype->offset = off;
+                fieldtype->bitoff = bitoff;
+            }
+            else {
+                finishBitfield(&off, &bitoff);
+                off += computePadding(off, fieldtype->align);
+                fieldtype->offset = off;
+                fieldtype->bitoff = 0;
+            }
+            bitoff += fieldtype->bitsize;
+        }
+        else {
+            finishBitfield(&off, &bitoff);
+            off += computePadding(off, fieldtype->align);
+            fieldtype->offset = off;
+            off += fieldtype->size;
+        }
+        if (name) dictPut(r, name, fieldtype);
+    }
+}
+
+static Dict* updateUnionOffset(int *rsize, int *align, std::vector<
+        std::pair<char*, Type*>* > *fields) {
+    int maxsize = 0;
+    Dict *r = makeDict();
+    for (unsigned i = 0; i < fields->size(); i++) {
+        std::pair<char*, Type*> *pp = (*fields)[i];
+        char *name = pp->first;
+        Type *fieldtype = pp->second;
+        maxsize = std::max(maxsize, fieldtype->size);
+        *align = std::max(*align, fieldtype->align);
+        if (name == NULL && fieldtype->kind == KIND_STRUCT) {
+            squashUnnamedStruct(r, fieldtype, 0);
+            continue;
+        }
+        fieldtype->offset = 0;
+        if (fieldtype->bitsize >= 0) fieldtype->bitoff = 0;
+        if (name) dictPut(r, name, fieldtype);
+    }
+    *rsize = maxsize + computePadding(maxsize, *align);
+    continue;
 }
 
 static Node* astGvar(Type *tp, char *name) {
