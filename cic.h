@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <iostream>
+#include <algorithm>
 
 char* newChar(char *src) {
     char *ret = NULL;
@@ -250,6 +251,7 @@ struct Node {
         };
         struct {
             Node *declvar;
+            std::vector<Node*> *declinit;
         };
         struct {
             Node *initval;

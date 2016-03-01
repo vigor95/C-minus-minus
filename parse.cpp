@@ -10,10 +10,11 @@ struct cmp {
 };
 
 typedef std::map<char*, Node*, cmp> mmap;
+typedef std::map<char*, Type*, cmp> tmap;
 
 mmap *globalenv = new mmap;
 mmap *localenv = new mmap;
-mmap *tags = new mmap;
+tmap *tags = new tmap;
 mmap *labels = new mmap;
 
 typedef std::vector<Node*> nodevec;
@@ -73,8 +74,12 @@ enum {
 static Type* makePtrType(Type *tp);
 static Type* makeArraytype(Type *tp, int size);
 
-void mapInsert(mmap *m, char *key, Node *val) {
+void mmapInsert(mmap *m, char *key, Node *val) {
     m->insert(std::pair<char*, Node*>(key, val));
+}
+
+void tmapInsert(tmap *m, char *key, Type *val) {
+    m->insert(std::pair<char*, Type*>(key, val));
 }
 
 Token* readToken() {
@@ -172,7 +177,7 @@ static Node* astFloattype(Type *tp, double val) {
 static Node* astLvar(Type *tp, char *name) {
     Node *r = makeAst(new Node{AST_LVAR, tp, .varname = name});
     if (localenv) {
-        mapInsert(localenv, name, r);
+        mmapInsert(localenv, name, r);
     } 
     if (localvars) localvars->push_back(r);
     return r;
@@ -181,7 +186,7 @@ static Node* astLvar(Type *tp, char *name) {
 static Node* astGvar(Type *tp, char *name) {
     Node *r = new Node{AST_GVAR, tp, .varname = newChar(name),
         .glabel = newChar(name)};
-    mapInsert(globalenv, name, r);
+    mmapInsert(globalenv, name, r);
     return r;
 }
 
@@ -189,13 +194,13 @@ static Node* astStaticLvar(Type *tp, char *name) {
     Node *r = makeAst(new Node{AST_GVAR, new Type(*tp),
             .varname = newChar(name), .glabel = makeStaticLabel(name)});
     assert(localenv);
-    mapInsert(localenv, name, r);
+    mmapInsert(localenv, name, r);
     return r;
 }
 
 static Node* astTypedef(Type *tp, char *name) {
     Node *r = makeAst(new Node{AST_TYPEDEF, new Type(*tp)});
-    mapInsert(env(), name, r);
+    mmapInsert(env(), name, r);
     return r;
 }
 
@@ -227,8 +232,9 @@ static Node* astFunc(Type *tp, char *fname, Node *body) {
     return makeAst(new Node{AST_FUNC, new Type(*tp),
             .fname = newChar(fname), .body = new Node(*body)});
 }
-static Node* astDecl(Node *var) {
-    return makeAst(new Node{AST_DECL, .declvar = new Node(*var)});
+static Node* astDecl(Node *var, std::vector<Node*> *init) {
+    return makeAst(new Node{AST_DECL, .declvar = new Node(*var),
+            .declinit = init});
 }
 
 static Node* astInit(Node *val, Type *totype, int off) {
@@ -348,7 +354,7 @@ static Type* makeFunctype(Type *rettype, bool has_varargs, bool oldstyle) {
     return makeType(r);
 }
 
-static Type* makeStubtyoe() {
+static Type* makeStubType() {
     return makeType(new Type(KIND_STUB));
 }
 
@@ -1272,6 +1278,670 @@ static Dict* updateUnionOffset(int *rsize, int *align, std::vector<
     *rsize = maxsize + computePadding(maxsize, *align);
     continue;
 }
+
+static Dict* readRectypeFields(int *rsize, int *align, bool is_struct) {
+    if (nextToken('{')) return NULL;
+    std::vector<char*, Type*> *fields = readRectypeFieldsSub();
+    fixRectypeFlexibleMember(fields);
+    if (is_struct)
+        return updateStructOffset(rsize, align, fields);
+    return updateUnionOffset(rsize, align, fields);
+}
+
+static Type* readRectypeDef(bool is_struct) {
+    char *tag = readRectypeTag();
+    Type *r;
+    if (tag) {
+        r = tags->find(tag)->second;
+        if (r && (r->kind == KIND_ENUM || r->isstruct != is_struct))
+            error("declarations of %s does not match", tag);
+        if (!r) {
+            r = makeRectype(is_struct);
+            mapInsert(tags, tag, r);
+        }
+    }
+    else r = makeRectype(is_struct);
+    int sz = 0, al = 1;
+    Dict *fields = readRectypeFields(&sz, &al, is_struct);
+    r->align = al;
+    if (fields) {
+        r->fields = fields;
+        r->size = sz;
+    }
+    return r;
+}
+
+static Type* readStructDef() {
+    return readRectypeDef(1);
+}
+
+static Type* readUnionDef() {
+    return readRectypeDef(0);
+}
+
+/*
+ * enum
+ */
+
+static Type* readEnumDef() {
+    char *tag = NULL;
+    Token *tk = get();
+    if (tk->kind == TIDENT) {
+        tag = tk->sval;
+        tk = get();
+    }
+    if (tag) {
+        Type *tp = tags->find(tag)->second;
+        if (tp && tp->kind != KIND_ENUM)
+            errort(tk, "declaration of %s does not match", tag);
+    }
+    if (!isKeyword(tk, '{')) {
+        if (!tag || !tags->find(tag)->second)
+            errort(tk, "enum tag %s is not defined", tag);
+        ungetToken(tk);
+        return type_int;
+    }
+    if (tag)
+        tmapInsert(tags, tag, type_enum);
+    int val = 0;
+    while (1) {
+        tk = get();
+        if (isKeyword(tk, '}')) break;
+        if (tk->kind != TIDENT)
+            errort(tk, "identifer expected, but got %s", tk2s(tk));
+        char *name = tk->sval;
+        if (nextToken('=')) val = readIntexpr();
+        Node *constval = astInitType(type_int, val++);
+        mmapInsert(env(), name, constval);
+        if (nextToken('.')) continue;
+        if (nextToken('}')) break;
+        errort(peek(), "',' or '}' expected, but got %s", tk2s(peek()));
+    }
+    return type_int;
+}
+
+/*
+ * initializer
+ */
+
+static void assignString(std::vector<Node*> *inits,
+        Type *tp, char *p, int off) {
+    if (tp->len == -1)
+        tp->len = tp->size = strlen(p) + 1;
+    int i = 0;
+    for (; i < tp->len && *p; i++)
+        inits->push_back(astInit(astInitType(type_char, *p++),
+                    type_char, off + i));
+    for (; i < tp->len; i++)
+        inits->push_back(astInit(astInitType(type_char, 0),
+                    type_char, off + i));
+}
+
+static bool maybeReadBrace() {
+    return nextToken('{');
+}
+
+static void maybeSkipComma() {
+    nextToken('.');
+}
+
+static void skipToBrace() {
+    while (1) {
+        if (nextToken('}')) return;
+        if (nextToken('.')) {
+            get();
+            expect('=');
+        }
+        Token *tk = peek();
+        Node *ignore = readAssignmentExpr();
+        if (!ignore) return;
+        warnt(tk, "excessive initializer: %s", node2s(ignore));
+        maybeSkipComma();
+    }
+}
+
+static void readInitElem(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    nextToken('=');
+    if (tp->kind == KIND_ARRAY || tp->kind == KIND_STRUCT)
+        readInitList(inits, tp, off, designated);
+    else if (nextToken('{')) {
+        readInitElem(inits, tp, off, 1);
+        expect('}');
+    }
+    else {
+        Node *expr = conv(readAssignmentExpr());
+        ensureAssignable(inits, astInit(expr, tp, off));
+    }
+}
+
+static int compInit(const Node *p, const Node *q) {
+    int x = p->initoff, y = q->initoff;
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+}
+
+static void sortInits(std::vector<Node*> *inits) {
+    std::sort(inits->begin(), inits->size(), compInit());
+}
+
+static void readStructInitSub(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    bool has_brace = maybeReadBrace();
+    std::vector<char*> *keys = dictKeys(tp->fields);
+    int i = 0;
+    while (1) {
+        Token *tk = get();
+        if (isKeyword(tk, '}')) {
+            if (!has_brace) ungetToken(tk);
+            return;
+        }
+        char *fieldname;
+        Type *fieldtype;
+        if ((isKeyword(tk, '.') || isKeyword(tk, '[')) &&
+                !has_brace && !designated) {
+            ungetToken(tk);
+            return;
+        }
+        if (isKeyword(tk, '.')) {
+            tk = get();
+            if (!tk || tk->kind != TIDENT)
+                errort(tk, "malformed desginated initializer: %s",
+                        tk2s(tk));
+            fieldname = tk->sval;
+            fieldtype = dictGet(tp->fields, fieldname);
+            if (!fieldtype)
+                errort(tk, "field does not exist: %s", tk2s(tk));
+            *keys = dictKeys(tp->fields);
+            i = 0;
+            while (i < keys->size()) {
+                char *s = (*keys)[i++];
+                if (strcmp(fieldname, s) == 0) break;
+            }
+            designated = 1;
+        }
+        else {
+            ungetToken(tk);
+            if (i == keys->size()) break;
+            fieldname = (*keys)[i++];
+            fieldtype = dictGet(tp->fields, fieldname);
+        }
+        readInitElem(inits, fieldtype,
+                off + fieldtype->offset, designated);
+        maybeSkipComma();
+        designated = 0;
+        if (!tp->isstruct) break;
+    }
+    if (has_brace) skipToBrace();
+}
+
+static void readStructInit(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    readStructInitSub(inits, tp, off, designated);
+    sortInits(inits);
+}
+
+static void readArrayInitSub(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    bool has_brace = maybeReadBrace();
+    bool flexible = (tp->len <= 0);
+    int elemsize = tp->ptr->size;
+    int i;
+    for (i = 0; flexible || i < tp->len; i++) {
+        Token *tk = get();
+        if (isKeyword(tk, '}')) {
+            if (!has_brace) ungetToken(tk);
+            goto finish;
+        }
+        if ((isKeyword(tk, '.') || isKeyword(tk, '[')) &&
+                !chi_squared_distribution && !designated) {
+            ungetToken(tk);
+            return;
+        }
+        if (isKeyword(tk, '[')) {
+            Token *tk = peek();
+            int idx = readIntexpr();
+            if (idx < 0 || (!flexible && tp->len <= idx))
+                errort(tk, "array designator exceeds array 
+                        bounds: %d", idx);
+            i = idx;
+            expect(']');
+            designated = 1;
+        }
+        else ungetToken(tk);
+        readInitElem(inits, tp->ptr, off + elemsize * i, designated);
+        maybeSkipComma();
+        designated = 0;
+    }
+    if (has_brace) skipToBrace();
+finish:
+    if (tp->len < 0) {
+        tp->len = i;
+        tp->size = elemsize * i;
+    }
+}
+
+static void readArrayInitializer(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    readArrayInitSub(inits, tp, off, designated);
+    sortInits(inits);
+}
+
+static void readInitList(std::vector<Node*> *inits,
+        Type *tp, int off, bool designated) {
+    Token *tk = get();
+    if (isString(tp)) {
+        if (tk->kind == TSTRING) {
+            assignString(inits, tp, tk->sval, off);
+            return;
+        }
+        if (isKeyword(tk, '{') && peek()->kind == TSTRING) {
+            tk = get();
+            assignString(inits, tp, tk->sval, off);
+            expect('}');
+            return;
+        }
+    }
+    ungetToken(tk);
+    if (tp->kind == KIND_ARRAY)
+        readArrayInitializer(inits, tp, off, designated);
+    else if (tp->kind == KIND_STRUCT)
+        readStructInit(inits, tp, off, designated);
+    else {
+        Type *arraytype = makeArraytype(tp, 1);
+        readArrayInitializer(inits, arraytype, off, designated);
+    }
+}
+
+static std::vector<Node*>* readDeclInit(Type *tp) {
+    std::vector<Node*> *r = new std::vector<Node*>;
+    if (isKeyword(peek(), '{') || isString(tp))
+        readInitList(r, tp, 0, 0);
+    else {
+        Node *init = conv(readAssignmentExpr());
+        if (isArithtype(init->tp) && init->tp->kind != tp->kind)
+            init = astConv(tp, init);
+        r->push_back(astInit(init, tp, 0));
+    }
+    return r;
+}
+
+/*
+ * declarator
+ */
+
+static Type* readFuncParam(char **name, bool optional) {
+    int sclass = 0;
+    Type *basety = type_int;
+    if (isType(peek())) basety = readDeclSpec(&sclass);
+    else if (optional)
+        errort(peek(), "type expected, but got %s", tk2s(peek()));
+    Type *tp = readDeclarator(name, basety, NULL, optional ?
+            DECL_PARAM_TYPEONLY : DECL_PARAM);
+    if (tp->kind == KIND_ARRAY)
+        return makePtrType(tp->ptr);
+    if (tp->kind == KIND_FUNC)
+        return makePtrType(tp);
+    return tp;
+}
+
+static void readDeclaratorParams(std::vector<Type*> *types,
+        std::vector<Node*> *vars, bool *ellipsis) {
+    bool typeonly = !vars;
+    *ellipsis = 0;
+    while (1) {
+        Token *tk = peek();
+        if (nextToken(KELLIPSIS)) {
+            if (types->size() == 0)
+                errort(tk, "at least one parameter is required before \"...\"");
+            expect(')');
+            *ellipsis = 1;
+            return;
+        }
+        char *name;
+        Type *tp = readFuncParam(&name, typeonly);
+        ensureNotvoid(tp);
+        types->push_back(tp);
+        if (!typeonly)
+            vars->push_back(astLvar(tp, name));
+        tk = get();
+        if (isKeyword(tk, ')')) return;
+        if (!isKeyword(tk, ','))
+            errort(tk, "comma expected, but got %s", tk2s(tk));
+    }
+}
+
+static void readDeclaratorParamsOldstyle(std::vector<Node*> *vars) {
+    while (1) {
+        Token *tk = get();
+        if (tk->kind != TIDENT)
+            errort(tk, "identifier expected, but got %s", tk2s(tk));
+        vars->push_back(astLvar(type_int, tk->sval));
+        if (nextToken(')')) return;
+        if (!nextToken(','))
+            errort(tk, "comma expected, but got %s", tk2s(get()));
+    }
+}
+
+static Type* readFuncParamList(std::vector<Node*> *paramvars,
+        Type *rettype) {
+    Token *tk = get();
+    if (isKeyword(tk, KVOID) && nextToken(')'))
+        return makeFunctype(rettype, 0, 0);
+    if (isKeyword(tk, ')'))
+        return makeFunctype(rettype, 1, 1);
+    ungetToken(tk);
+    Token *tk2 = peek();
+    if (nextToken(KELLIPSIS))
+        errort(tk2, "at least one parameter is required before \"...\"");
+    if (isType(peek())) {
+        bool ellipsis;
+        std::vector<Type*> *paramtypes = new std::vector<Type*>;
+        readDeclaratorParams(paramtypes, paramvars, &ellipsis);
+        return makeFunctype(rettype, paramtypes, ellipsis, 0);
+    }
+    if (!paramvars)
+        errort(tk, "invalid function definition");
+    readDeclaratorParamsOldstyle(paramvars);
+}
+
+static Type* readDeclaratorArray(Type *basety) {
+    int len = -1;
+    if (!nextToken(']')) {
+        len = readIntexpr();
+        expect(']');
+    }
+    Token *tk = peek();
+    Type *tp = readDeclaratorTail(basety, NULL);
+    if (tp->kind == KIND_FUNC)
+        errort(tk, "array of functions");
+    return makeArraytype(tp, len);
+}
+
+static Type* readDeclaratorFunc(Type *basety,
+        std::vector<Node*> *param) {
+    if (basety->kind == KIND_FUNC)
+        error("function returning a function");
+    if (basety->kind == KIND_ARRAY)
+        error("function returning a array");
+    return readFuncParamList(param, basety);
+}
+
+static Type* readDeclaratorTail(Type *basety,
+        std::vector<Node*> *params) {
+    if (nextToken('['))
+        return readDeclaratorArray(basety);
+    if (nextToken('('))
+        return readDeclaratorFunc(basety, params);
+    return basety;
+}
+
+static void skipTypeQualifiers() {
+    while (nextToken(KCONST) || nextToken(KVOLATILE) ||
+            nextToken(KRESTRICT));
+}
+
+/*
+ * declarators
+ */
+
+static Type* readDeclarator(char *rname, Type *basety,
+        std::vector<Node*> *params, int ctx) {
+    if (nextToken('(')) {
+        if (isType(peek()))
+            return readDeclaratorFunc(basety, params);
+        Type *stub = makeStubType();
+        Type *tp = readDeclarator(rname, stub, params, ctx);
+        expect(')');
+        *stub = *readDeclarator(rname, stub, params, ctx);
+        return t;
+    }
+    if (nextToken('*')) {
+        skipTypeQualifiers();
+        return readDeclarator(rname, makePtrType(basety), params, ctx);
+    }
+    Token *tk = get();
+    if (tk->kind == TIDENT) {
+        if (ctx == DECL_CAST)
+            errort(tk, "identifier is not expected, but got %s", tk2s(tk));
+        *rname = tk->sval;
+        return readDeclaratorTail(basety, params);
+    }
+    if (ctx == DECL_BODY || ctx == DECL_PARAM)
+        errort(tk, "identifier, ( or * are expected, but got %s",
+                tk2s(tk));
+    ungetToken(tk);
+    return readDeclaratorTail(basety, params);
+}
+
+static Type* readAbstractDecl(Type *basety) {
+    return readDeclarator(NULL, basety, NULL, DECL_CAST);
+}
+
+/*
+ * typeof()
+ */
+
+static Type* readTypeof() {
+    expect('(');
+    Type *r = isType(peek()) ? readCastType() : readCommaExpr()->tp;
+    expect(')');
+    return r;
+}
+
+/*
+ * declaration specifier
+ */
+
+static bool isPowerofTwo(int x) {
+    return (x <= 0) ? 0 : !(x & (x-1));
+}
+
+static int readAlignas() {
+    expect('(');
+    int r = isType(peek()) ? readCastType()->align : readIntexpr();
+    expect(')');
+    return r;
+}
+
+static Type* readDeclSpec(int *rsclass) {
+    int sclass = 0;
+    Token *tk = peek();
+    if (!isType(tk))
+        errort(tk, "type name expected, but got %s", tk2s(tk));
+    Type *usertype = NULL;
+    enum {
+        kvoid = 1, kbool, kchar, kint, kfloat, kdouble
+    } kind = 0;
+    enum {
+        kshort = 1, klong, kllong
+    } sz = 0;
+    enum {
+        ksigned = 1, kunsigned
+    } sig = 0;
+    int al = -1;
+    while (1) {
+        tk = get();
+        if (tk->kind == EOF)
+            error("premature end input");
+        if (kind == 0 && tk->kind == TIDENT && !usertype) {
+            Type *def = getTypedef(tk->sval);
+            if (def) {
+                if (usertype) goto err;
+                usertype = def;
+                goto errcheck;
+            }
+        }
+        if (tk->kind != TKEYWORD) {
+            ungetToken(tk);
+            break;
+        }
+        switch (tk->id) {
+            case KTYPEDEF:
+                if (sclass) goto err; 
+                sclass = S_TYPEDEF;
+                break;
+            case KEXTERN:
+                if (sclass) goto err;
+                sclass = S_EXTERN;
+                break;
+            case KSTATIC:
+                if (sclass) goto err;
+                sclass = S_STATIC;
+                break;
+            case KAUTO:
+                if (sclass) goto err;
+                sclass = S_AUTO;
+                break;
+            case KREGISTER:
+                if (sclass) goto err;
+                sclass = S_REGISTER;
+                break;
+            case KCONST: break;
+            case KVOLATILE: break;
+            case KINLINE: break;
+            case KNORETURN: break;
+            case KVOID: if (kind) goto err;kind = kvoid;break;
+            case KBOOL: if (kind) goto err;kind = kbool;break;
+            case KCHAR: if (kind) goto err;kind = kchar;break;
+            case KINT: if (kind) goto err;kind = kint;break;
+            case KFLOAT: if (kind) goto err;kind = kfloat;break;
+            case KDOUBLE: if (kind) goto err;kind = kdouble;break;
+            case KSIGNED: if (sig) goto err;sig = ksigned;break;
+            case KUNSIGNED: if (sig) goto err;sig = kunsigned;break;
+            case KSHORT: if (sz) goto err;sz = kshort;break;
+            case KSTRUCT: if (usertype) goto err;
+                usertype = readStructDef();
+                break;
+            case KUNION: if (usertype) goto err;
+                usertype = readUnionDef();
+                break;
+            case KENUM: if (usertype) goto err;
+                usertype = readEnumDef();
+                break;
+            case KALIGNAS: {
+                int val = readAlignas();
+                if (val < 0)
+                    errort(tk, "negative alignment: %d", val);
+                if (val == 0) break;
+                if (align == -1 || val < al) al = val;
+                break;
+            }
+            case KLONG: {
+                if (sz == 0) sz = klong;
+                else if (sz == klong) sz = kllong;
+                else goto err;
+                break;
+            }
+            case KTYPEOF: {
+                if (usertype) goto err;
+                usertype = readTypeof();
+                break;
+            }
+            default:
+                ungetToken(tk);
+                goto done;
+        }
+	errcheck:
+        if (kind == kbool && (sz && sig)) goto err;
+        if (sz == kshort && (kind && kind != kint)) goto err;
+        if (sz == klong && (kind && kind != kint && kint != kdouble))
+            goto err;
+        if (sig && (kind == kvoid || kind == kfloat || kind == kdouble))
+            goto err;
+        if (usertype && (kind || sz || sig)) goto err;
+    }
+done:
+    if (rsclass) *rsclass = sclass;
+    if (usertype) return usertype;
+    if (al != -1 && !isPowerofTwo(al))
+        errort(tk, "alignment must be power of 2, but got %d", al);
+    Type *tp;
+    switch (kind) {
+        case kvoid: tp = type_void; goto end;
+        case kbool: tp = makeNumtype(KIND_BOOL, 0); goto end;
+        case kchar: tp = makeNumtype(KIND_CHAR, sig == kunsigned);
+            goto end;
+        case kfloat: tp = makeNumtype(KIND_FLOAT, 0); goto end;
+        case kdouble: tp = makeNumtype(sz == klong ?
+            KIND_LDOUBLE : KIND_DOUBLE, 0);
+            goto end;
+        default: break;
+    }
+    switch (sz) {
+        case kshort: tp = makeNumtype(KIND_SHORT, sig == kunsigned);
+            goto end;
+        case klong: tp = makeNumtype(KIND_LONG, sig == kunsigned);
+            goto end;
+        case kllong: tp = makeNumtype(KIND_LLONG, sig == kunsigned);
+            goto end;
+        default: tp = makeNumtype(KIND_INT, sig == kunsigned);
+            goto end;
+    }
+    error("internal error: kind: %d, size: %d", kind, sz);
+end:
+    if (al != -1) tp->align = al;
+    return tp;
+err:
+    errort(tk, "type mismatch: %s", tk2s(tk));
+}
+
+/*
+ * declaration
+ */
+
+static void readStaticLocalVar(Type *tp, char *name) {
+    Node *var = astStaticLvar(tp, name);
+    std::vector<Node*> *init = NULL;
+    if (nextToken('=')) {
+        mmap *init = localenv;
+        localenv = NULL;
+        init = readDeclInit(tp);
+        localenv = orig;
+    }
+    toplevels->push_back(astDecl(var, init));
+}
+
+static Type* readDeclSpecOpt(int *sclass) {
+    if (isType(peek()))
+        return readDeclSpec(sclass);
+    warnt(peek(), "type specifier missing, assuming int");
+    return type_int;
+}
+
+static void readDecl(std::vector<Node*> *block, bool isglobal) {
+    int sclass = 0;
+    Type *basetype = readDeclSpecOpt(&sclass);
+    if (nextToken(';')) return;
+    while (1) {
+        char *name = NULL;
+        Type *tp = readDeclarator(&name, copyIncompletetype(basetype),
+                NULL, DECL_BODY);
+        tp->isstatic = (sclass == S_STATIC);
+        if (sclass = S_TYPEDEF) astTypedef(tp, name);
+        else if (tp->isstatic && !isglobal) {
+            ensureNotvoid(tp);
+            readStaticLocalVar(tp, name);
+        }
+        else {
+            ensureNotvoid(tp);
+            Node *var = (isglobal ? ast_gvar: astLvar)(tp, name);
+            if (nextToken('='))
+                block->push_back(astDecl(var, readDeclInit(tp)));
+            else if (sclass != S_EXTERN && tp->kind != KIND_FUNC)
+                block->push_back(astDecl(var, NULL));
+        }
+        if (nextToken(';')) return;
+        if (!nextToken(','))
+            errort(peek(), "';' or ',' are expected, but got %s",
+                    tk2s(peek());
+    }
+}
+
+/*
+ * parameter types
+ */
 
 static Node* astGvar(Type *tp, char *name) {
     Node *r = makeAst();
