@@ -3,25 +3,20 @@
 const int MAX_ALIGN = 16;
 SourceLoc *source_loc;
 
-struct cmp {
-    bool operator()(const char *s1, const char *s2) {
-        return strcmp(s1, s2) < 0;
-    }
-};
+typedef Map<Node> nmap;
+typedef Map<Type> tmap;
 
-typedef std::map<char*, Node*, cmp> mmap;
-typedef std::map<char*, Type*, cmp> tmap;
-
-mmap *globalenv = new mmap;
-mmap *localenv = new mmap;
+nmap *globalenv = new nmap;
+nmap *localenv = new nmap;
 tmap *tags = new tmap;
-mmap *labels = new mmap;
+nmap *labels = new nmap;
 
 typedef std::vector<Node*> nodevec;
 nodevec *toplevels;
 nodevec *localvars;
 nodevec *gotos;
 nodevec *cases;
+static Type *current_func_type;
 
 //static Map *globalenv = new Map;
 //static Map *localenv;
@@ -74,12 +69,12 @@ enum {
 static Type* makePtrType(Type *tp);
 static Type* makeArraytype(Type *tp, int size);
 
-void mmapInsert(mmap *m, char *key, Node *val) {
-    m->insert(std::pair<char*, Node*>(key, val));
+void mmapInsert(nmap *m, char *key, Node *val) {
+    m->body->insert(std::pair<char*, Node*>(key, val));
 }
 
 void tmapInsert(tmap *m, char *key, Type *val) {
-    m->insert(std::pair<char*, Type*>(key, val));
+    m->body->insert(std::pair<char*, Type*>(key, val));
 }
 
 Token* readToken() {
@@ -143,7 +138,7 @@ static Case* makeCase(int beg, int end, char *label) {
     return new Case(beg, end, label);
 }
 
-static mmap* env() {
+static nmap* env() {
     return localenv ? localenv : globalenv;
 }
 
@@ -262,8 +257,8 @@ static Node* astReturn(Node *retval) {
     return makeAst(new Node{AST_RETURN, .retval = new Node(*retval)});
 }
 
-static Node* astCompoundstmt() {
-    return makeAst(new Node{AST_COMPOUND_STMT});
+static Node* astCompoundstmt(std::vector<Node*> *stmts) {
+    return makeAst(new Node{AST_COMPOUND_STMT, .stmts = stmts});
 }
 
 static Node* astStructref(Type *tp, Node *struc, char *name) {
@@ -418,7 +413,7 @@ static Type* copyIncompletetype(Type *tp) {
 }
 
 static Type* getTypedef(char *name) {
-    Node *node = env()->find(name)->second;
+    Node *node = env()->body->find(name)->second;
     return (node && node->kind == AST_TYPEDEF) ? node->tp : NULL;
 }
 
@@ -1935,13 +1930,283 @@ static void readDecl(std::vector<Node*> *block, bool isglobal) {
         if (nextToken(';')) return;
         if (!nextToken(','))
             errort(peek(), "';' or ',' are expected, but got %s",
-                    tk2s(peek());
+                    tk2s(peek()));
     }
 }
 
 /*
  * parameter types
  */
+
+static readOldstyleParamArgs() {
+    auto orig = localenv;
+    localenv = NULL;
+    auto r = new std::vector<Node*>;
+    while (1) {
+        if (isKeyword(peek(), '{')) break;
+        if (!isType(peek()))
+            errort(peek(), "k&r-style declarator expected, but got %s",
+                    tk2s(peek()));
+        readDecl(r, 0);
+    }
+    localenv = orig;
+    return r;
+}
+
+static void upateOldstyleParamType(std::vector<Node*> *params,
+        std::vector<Node*> *vars) {
+    for (unsigned i = 0; i < vars->size(); i++) {
+        Node *decl = (*vars)[i];
+        assert(decl->kind == AST_DECL);
+        Node *var = decl->declvar;
+        assert(var->kind == AST_LVAR);
+        for (unsigned j = 0; j < params->size(); j++) {
+            auto param = (*params)[j];
+            assert(param->kind == AST_LVAR);
+            if (strcmp(param->varname, var->varname)) continue;
+            param->tp = var->tp;
+            goto found;
+        }
+        error("missing parameter: %s", var->varname);
+found:;
+    }
+}
+
+static void readOldstyleParamType(std::vector<Node*> *params) {
+    auto vars = readOldstyleParamArgs();
+    upateOldstyleParamType(params, vars);
+}
+
+static std::vector<Type*>* paramTypes(std::vector<Node*> *params) {
+    auto r = new std::vector<Type*>;
+    for (unsigned i = 0; i < params->size(); i++) {
+        Node *param = (*params)[i];
+        r->push_back(param->tp);
+    }
+    return r;
+}
+
+/*
+ * function definition
+ */
+
+static Node* readFuncBody(Type *functype, char *fname) {
+    localenv = makeMapParent(localenv);
+    localvars = new std::vector<Node*>;
+    current_func_type = functype;
+    Node *funcname = astString(fname, strlen(fname) + 1);
+    char *s = newChar("__func__");
+    mapInsert(localenv, s, funcname);
+    s = newChar("__FUNCTION__");
+    mapInsert(localenv, s, funcname);
+    Node *body = readCompoundStmt();
+    Node *r = astFunc(functype, fname, params, body, localvars);
+    current_func_type = NULL;
+    localenv = NULL;
+    return r;
+}
+
+static void skipParentheses(std::vector<Token*> *buf) {
+    while (1) {
+        Token *tk = get();
+        if (tk->kind == TEOF)
+            error("premature end of input");
+        buf->push_back(tk);
+        if (isKeyword(tk, ')')) return;
+        if (isKeyword(tk, '(')) skipParentheses(buf);
+    }
+}
+
+static bool isFuncdef() {
+    auto buf = new std::vector<Type*>;
+    bool r = 0;
+    while (1) {
+        Token *tk = get();
+        buf->push_back(tk);
+        if (tk->kind == TEOF)
+            error("premature end of input");
+        if (isKeyword(tk, ';')) break;
+        if (isType(tk)) continue;
+        if (isKeyword(tk, '(')) {
+            skipParentheses(buf);
+            continue;
+        }
+        if (tk->kind != TIDENT) continue;
+        if (!isKeyword(peek(), '(')) continue;
+        buf->push_back(get());
+        r = (isKeyword(peek(), '{') || isType(peek()));
+        break;
+    }
+    while (buf->size() > 0) {
+        buf->pop_back();
+        assert(buf->size() > 0);
+        ungetToken(buf->back());
+    } 
+    return r;
+}
+
+static void backfillLabels() {
+    for (unsigned i = 0; i < gotos->size(); i++) {
+        Node *src = (*gotos)[i];
+        char *label = src->label;
+        Node *dst = labels->get(label);
+        if (!dst)
+            error("stray %s: %s", src->kind == AST_GOTO ?
+                    "gogo" : "unary &&", label);
+        if (dst->newlabel)
+            src = newlabel = dst->newlabel;
+        else
+            src->newlabel = dst->newlabel = makeLabel();
+    }
+}
+
+static Node* readFuncdef() {
+    int sclass = 0;
+    Type *basetype = readDeclSpecOpt(&sclass);
+    localenv = makeMapParent(globalenv);
+    gotos = new vector<Node*>;
+    labels = new Map<Node*>;
+    char *name;
+    Type *functype = readDeclarator(&name, basetype, params, DECL_BODY);
+    if (functype->oldstyle) ;
+}
+
+/*
+ * if
+ */
+
+static Node* readBoolExpr() {
+    Node *cond = readExpr();
+    return isFlotype(cond->tp) ? astConv(type_bool, cond) : cond;
+}
+
+static Node* readIfStmt() {
+    expect('(');
+    Node *cond = readBoolExpr();
+    expect(')');
+    Node *then = readStmt();
+    if (!nextToken(KELSE))
+        return astIf(cond, then, NULL);
+    Node *els = readStmt();
+    return astIf(cond, then, els);
+}
+
+/*
+ * for
+ */
+
+static Node* readOptDeclOrStmt() {
+    if (nextToken(';')) return NULL;
+    readDeclOrStmt(list);
+    return astCompoundstmt(list);
+}
+
+#define SET_JUMP_LABELS(cont, brk)  \
+    char *ocontinue = lcontinue;    \
+    char *obreak = lbreak;          \
+    lcontinue = cont;               \
+    lbreak = brk;
+
+#define RESTORE_JUMP_LABELS()       \
+    lcontinue = ocontinue;          \
+    lbreak = obreak;
+
+static Node* readForStmt() {
+    expect('(');
+    char *beg = makeLabel();
+    char *mid = makeLabel();
+    char *end = makeLabel();
+    auto orig = localenv;
+    localenv = makeMapParent(localenv);
+    auto init = readOptDeclOrStmt();
+    auto cond = readExprOpt();
+    if (cond && isFlotype(cond->tp))
+        cond = astConv(type_bool, cond);
+    expect(';');
+    auto *step = readExprOpt();
+    expect(')');
+    SET_JUMP_LABELS(mid, end);
+    auto body = readStmt();
+    RESTORE_JUMP_LABELS();
+    localenv = orig;
+
+    auto v = new std::vector<Node*>;
+    if (init) v->push_back(init);
+    v->push_back(astDest(beg));
+    if (cond) v->push_back(astIf(cond, NULL, astJump(end)));
+    if (body) v->push_back(body);
+    v->push_back(astDest(mid));
+    if (step) v->push_back(step);
+    v->push_back(astJump(beg));
+    v->push_back(astDest(end));
+    return astCompoundstmt(v);
+}
+
+/*
+ * while
+ */
+
+static Node* readWhileStmt() {
+    expect('(');
+    auto cond = readBoolExpr();
+    expect(')');
+    auto beg = makeLabel();
+    auto end = makeLabel();
+    SET_JUMP_LABELS(beg, end);
+    auto body = readStmt();
+    RESTORE_JUMP_LABELS();
+    auto v = new std::vector<Node*>;
+    v->push_back(astDest(beg));
+    v->push_back(astIf(cond, body, astJump(end)));
+    v->push_back(astJump(beg));
+    v->push_back(astDest(end));
+    return astCompoundstmt(v);
+}
+
+/*
+ * do
+ */
+
+static Node* readDoStmt() {
+    auto beg = makeLabel();
+    auto end = makeLabel();
+    SET_JUMP_LABELS(beg, end);
+    auto body = readStmt();
+    RESTORE_JUMP_LABELS();
+    auto tk = get();
+    if (!isKeyword(tk, KWHILE))
+        errort(tk, "'while' is expected, but got %s", tk2s(tk));
+    expect('(');
+    auto cond = readBoolExpr();
+    expect(')');
+    expect(';');
+
+    auto v = new std::vector<Node*>;
+    v->push_back(astDest(beg));
+    if (body) v->push_back(body);
+    v->push_back(astIf(cond, astJump(beg), NULL));
+    v->push_back(astDest(end));
+    return astCompoundstmt(v);
+}
+
+/*
+ * switch
+ */
+
+static Node* makeSwitchJump(Node *var, Case *c) {
+    Node *cond;
+    if (c->beg == c->end)
+        cond = astBinop(type_int, OP_EQ, var,
+                astInitType(type_int, c->beg));
+    else {
+        auto x = astBinop(type_int, OP_LE,
+                astInitType(type_int, c->beg), var);
+        auto y = astBinop(type_int, OP_LE, var,
+                astInitType(type_int, c->end));
+        cond = astBinop(type_int, OP_LOGAND, x, y);
+    }
+    return astIf(cond, astJump(c->label), NULL);
+}
 
 static Node* astGvar(Type *tp, char *name) {
     Node *r = makeAst();

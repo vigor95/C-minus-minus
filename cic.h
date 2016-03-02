@@ -29,6 +29,12 @@ char* newChar(const char *src) {
     return ret;
 }
 
+struct cmp {
+    bool operator()(const char *s1, const char *s2) {
+        return strcmp(s1, s2) < 0;
+    }
+};
+
 enum {
     TIDENT,
     TKEYWORD,
@@ -52,17 +58,25 @@ enum {
     ENC_WCHAR
 }; 
 
-struct Map {
-    Map *parent;
-    char **key;
-    void **val;
-    int size;
-    int nelem;
-    int nused;
-};
 struct Type;
+struct Node;
+template <class T>
+struct Map {
+    Map<T> *parent;
+    std::map<char*, T*, cmp> *body;
+    Map(): parent(NULL), body(NULL) {}
+    Map(Map<T> *p): parent(p), body(new std::map<char*, T*, cmp>) {}
+    Node* get(char *key) {
+        auto it = body->find(key);
+        if (it != body->end()) return it->second;
+        if (parent) return parent->get(key);
+        return NULL;
+    }
+};
+
+template <class T>
 struct Dict {
-    std::map<char*, Type*> *map;
+    Map<T> *m;
     std::vector<char*> *key;
 };
 
@@ -124,6 +138,8 @@ struct Token {
         return *this;
     }
 };
+
+struct Node;
 
 enum {
     AST_LITERAL = 256,
@@ -193,7 +209,7 @@ struct Type {
     bool isstatic;
     Type *ptr;
     int len;
-    Dict *fields;
+    Dict<std::pair<char*, Type*> > *fields;
     int offset;
     bool isstruct;
     int bitoff;
@@ -305,78 +321,6 @@ struct Node {
     */
 };
 
-struct IntNode: public Node {
-    long ival;
-};
-
-struct FloatNode: public Node {
-    double fval;
-    char *flabel;
-};
-
-struct StringNode: public Node {
-    char *sval;
-    char *slabel;
-};
-
-struct LocgloNode: public Node {
-    char *varname;
-    int loff;
-    char *glabel;
-};
-
-struct BinaryNode: public Node {
-    Node *left;
-    Node *right;
-};
-
-struct UnaryNode: public Node {
-    Node *operand;
-    UnaryNode(Node *o) {}
-};
-
-struct FuncNode: public Node {
-    char *fname;
-    Type *ftype;
-    Node *fptr;
-    Node *body;
-};
-
-struct DeclNode: public Node {
-    Node *declvar;
-};
-
-struct InitNode: public Node {
-    Node *initval;
-    int *initoff;
-    Type *totype;
-};
-
-struct IfNode: public Node {
-    Node *cond;
-    Node *then;
-    Node *els;
-};
-
-struct GotoNode: public Node {
-    char *label;
-    char *newlabel;
-};
-
-struct  ReturnNode: public Node {
-    Node *retval;
-};
-
-struct CompNode: public Node {
-    
-};
-
-struct StructNode: public Node {
-    Node *struc;
-    char *field;
-    Type *fieldtype;
-};
-
 extern Type *type_void;
 extern Type *type_bool;
 extern Type *type_char;
@@ -411,10 +355,14 @@ char* node2s(Node *node);
 char* tk2s(Token *tk);
 
 // dict.cpp
-Dict* makeDict();
-Type* dictGet(Dict*, char*);
-void dictPut(Dict*, char*, Type*);
-std::vector<char*, Type*>* dictKeys(Dict*);
+template <class T>
+Dict<T>* makeDict();
+template <class T>
+Type* dictGet(Dict<T>*, char*);
+template <class T>
+void dictPut(Dict<T>*, char*, Type*);
+template <class T>
+std::vector<char*, Type*>* dictKeys(Dict<T>*);
 
 //file.cpp
 File *makeFile(FILE *file, char *name);
@@ -453,3 +401,7 @@ extern bool w_e;
 [[noreturn]] void errorf(const char *line, const char *pos, const char *fmt, ...);
 void warnf(const char *line, const char *pos, const char *fmt, ...);
 const char* tokenPos(Token *tk);
+
+// map.cpp
+template <class T>
+Map<T>* makeMapParent(Map<T>*);
