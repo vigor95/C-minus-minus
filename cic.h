@@ -209,7 +209,7 @@ struct Type {
     bool isstatic;
     Type *ptr;
     int len;
-    Dict<std::pair<char*, Type*> > *fields;
+    Dict<Type> *fields;
     int offset;
     bool isstruct;
     int bitoff;
@@ -226,6 +226,8 @@ struct Type {
         align(a), ptr(new Type(*t)) {}
     Type(int k, Type *t, int s, int l, int a): kind(k),
         size(s), align(a), ptr(new Type(*t)), len(l) {}
+    Type(int k, Type* rt, std::vector<Type*> *ps, bool hv, bool os):
+        kind(k), rettype(rt), params(ps), hasva(hv), oldstyle(os) {}
 };
 
 struct SourceLoc {
@@ -261,8 +263,11 @@ struct Node {
         };
         struct {
             char *fname;
+            std::vector<Node*> *args;
             Type *ftype;
             Node *fptr;
+            std::vector<Node*> *params;
+            std::vector<Node*> *localvars;
             Node *body;
         };
         struct {
@@ -272,6 +277,7 @@ struct Node {
         struct {
             Node *initval;
             int initoff;
+            std::vector<Node*> *lvarinit;
             Type *totype;
         };
         struct {
@@ -350,7 +356,7 @@ char *quoteCstringLen(char *p, int len);
 char *quoteChar(char c);
 
 // debug.cpp
-char* ty2s(Type *tp);
+char* tp2s(Type *tp);
 char* node2s(Node *node);
 char* tk2s(Token *tk);
 
@@ -360,7 +366,7 @@ Dict<T>* makeDict();
 template <class T>
 Type* dictGet(Dict<T>*, char*);
 template <class T>
-void dictPut(Dict<T>*, char*, Type*);
+void dictPut(Dict<T>*, char*, T*);
 template <class T>
 std::vector<char*, Type*>* dictKeys(Dict<T>*);
 

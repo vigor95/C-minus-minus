@@ -145,17 +145,17 @@ static void skipString() {
 
 static Token* readNumber(char c) {
     Buffer *b = makeBuffer();
-    bufWrite(*b, c);
+    bufWrite(b, c);
     char last = c;
     while (1) {
         int c = readc();
         bool flonum = strchr("eEpP", last) && strchr("+-", c);
         if (!isdigit(c) && !isalpha(c) && c != '.' && !flonum) {
             unreadc(c);
-            bufWrite(*b, '\0');
-            return makeNumber(bufBody(*b));
+            bufWrite(b, '\0');
+            return makeNumber(bufBody(b));
         }
-        bufWrite(*b, c);
+        bufWrite(b, c);
         last = c;
     }
 }
@@ -252,27 +252,27 @@ static Token* readString(int enc) {
         if (c == EOF) errorp(pos, "unterminated string");
         if (c == '"') break;
         if (c != '\\') {
-            bufWrite(*b, c);
+            bufWrite(b, c);
             continue;
         }
-        bufWrite(*b, c);
+        bufWrite(b, c);
     }
-    bufWrite(*b, '\0');
-    return makeStrtok(bufBody(*b), bufLen(*b), enc);
+    bufWrite(b, '\0');
+    return makeStrtok(bufBody(b), bufLen(b), enc);
 }
 
 static Token* readIdent(char c) {
     Buffer *b = makeBuffer();
-    bufWrite(*b, c);
+    bufWrite(b, c);
     while (1) {
         c = readc();
         if (isalnum(c) || (c & 0x80) || c == '_' || c == '$') {
-            bufWrite(*b, c);
+            bufWrite(b, c);
             continue;
         }
         unreadc(c);
-        bufWrite(*b, '\0');
-        return makeIdent(bufBody(*b));
+        bufWrite(b, '\0');
+        return makeIdent(bufBody(b));
     }
 }
 

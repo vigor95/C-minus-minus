@@ -8,7 +8,7 @@ static char* decorateInt(const char *name, Type *tp) {
     return format("%s%s", u, name);
 }
 
-static const char* doTp2s(Dict *dc, Type *tp) {
+static const char* doTp2s(Dict<Type> *dc, Type *tp) {
     if (!tp) return "(nil)";
     switch (tp->kind) {
         case KIND_VOID: return "void";
@@ -29,11 +29,12 @@ static const char* doTp2s(Dict *dc, Type *tp) {
             const char *kind = tp->isstruct ? "struct" : "union";
             if (dictGet(dc, format("%p", tp)))
                 return format("(%s)", kind);
-            dictPut(dc, format("%p", tp), (void *)1);
+            dictPut(dc, format("%p", tp), (Type*)1);
             if (tp->fields) {
                 Buffer *b = makeBuffer();
                 bufPrintf(b, "(%s", kind);
-                std::vector<char*> *keys = dictKeys(tp->fields);
+                std::vector<char*> *keys = tp->fields->key;
+                //std::vector<char*> *keys = dictKeys(tp->fields);
                 for (unsigned i = 0; i < keys->size(); i++) {
                     char *key = (*keys)[i];
                     Type *fieldtype = dictGet(tp->fields, key);
@@ -62,7 +63,7 @@ static const char* doTp2s(Dict *dc, Type *tp) {
 }
 
 char* tp2s(Type *tp) {
-    return doTp2s(makeDict(), tp);
+    return doTp2s(makeDict<Type>(), tp);
 }
 
 static void uopToString(Buffer *b, char *op, Node *node) {
@@ -137,7 +138,7 @@ static void doNode2s(Buffer *b, Node *node) {
                 node->kind == AST_FUNCALL ? node->fname : node2s(node);
             for (int i = 0; i < node->args->size(); i++) {
                 if (i > 0) bufPrintf(b, ",");
-                bufPrintf(b, "%s", node2s(*(node->args)[i]));
+                bufPrintf(b, "%s", node2s((*node->args)[i]));
             }
         }
     }
@@ -157,8 +158,8 @@ char* tk2s(Token *tk) {
         case TIDENT: return tk->sval;
         case TKEYWORD:
             switch (tk->id) {
-#define op(id, str) case id: return str;
-#define keyword(id, str, _) case id: return str;
+#define op(id, str) case id: return newChar(str);
+#define keyword(id, str, _) case id: return newChar(str);
 #include "keyword.inc"
 #undef keyword
 #undef op

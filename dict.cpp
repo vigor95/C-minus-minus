@@ -3,7 +3,7 @@
 template <class T>
 Dict<T>* makeDict() {
     Dict<T> *r = new Dict<T>;
-    r->map = new std::map<char*, Type*>;
+    r->map = new std::map<char*, T*>;
     r->key = new std::vector<char*>;
     return r;
 }
@@ -14,10 +14,10 @@ Type* dictGet(Dict<T> *dict, char *key) {
 }
 
 template <class T>
-void dictPut(Dict<T> *dict, char *key, Type *val) {
+void dictPut(Dict<T> *dict, char *key, T *val) {
     if (dict->map->find(key) != dict->map->end())
         dict->map->erase(key);
-    dict->map->insert(std::pair<char*, Type*>(key, val));
+    dict->map->insert(std::pair<char*, T*>(key, (T*)val));
 }
 
 template <class T>
