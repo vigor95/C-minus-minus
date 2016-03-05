@@ -15,11 +15,17 @@ int main(int argc, char **argv) {
     }
     infile = argv[1];
     lexInit(infile);
-    while (1) {
+    /*while (1) {
         Token *tk = lex();
         if (tk->kind != TNEWLINE) {
             std::cout << tk->line << ": " << table[tk->kind] << std::endl;
         }
         if (tk->kind == TEOF) break;
+    }*/
+    parseInit();
+    auto toplevels = readToplevels();
+    for (unsigned i = 0; i < toplevels->size(); i++) {
+        auto v = (*toplevels)[i];
+        printf("%s\n", node2s(v));
     }
 }

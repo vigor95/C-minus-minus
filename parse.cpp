@@ -13,16 +13,16 @@ struct Case {
 typedef Map<Node> nmap;
 typedef Map<Type> tmap;
 
-nmap *globalenv = new nmap;
-nmap *localenv;
-tmap *tags = new tmap;
-nmap *labels;
+static nmap *globalenv = new nmap;
+static nmap *localenv;
+static tmap *tags = new tmap;
+static nmap *labels;
 
 typedef std::vector<Node*> nvec;
 typedef std::vector<Type*> tvec;
-nvec *toplevels;
-nvec *localvars;
-nvec *gotos;
+static nvec *toplevels;
+static nvec *localvars;
+static nvec *gotos;
 std::vector<Case*> *cases;
 static Type *current_func_type;
 
@@ -69,7 +69,7 @@ static void readInitList(nvec*, Type*, int, bool);
 static Type* readCastType();
 static nvec* readDeclInit(Type*);
 static Node* readBooleanExpr();
-static Node* readExpr();
+Node* readExpr();
 static Node* readExprOpt();
 static Node* readConditionExpr();
 static Node* readAssignmentExpr();
@@ -77,7 +77,7 @@ static Node* readCastExpr();
 static Node* readCommaExpr();
 static Token* get();
 static Token* peek();
-
+int evalIntexpr(Node*, Node**);
 
 enum {
     S_TYPEDEF = 1,
@@ -98,10 +98,14 @@ static Type* makePtrType(Type *tp);
 static Type* makeArraytype(Type *tp, int size);
 
 void mapInsert(nmap *m, char *key, Node *val) {
+    if (m->body->find(key) != m->body->end())
+        m->body->erase(key);
     m->body->insert(std::pair<char*, Node*>(key, val));
 }
 
 void mapInsert(tmap *m, char *key, Type *val) {
+    if (m->body->find(key) != m->body->end())
+        m->body->erase(key);
     m->body->insert(std::pair<char*, Type*>(key, val));
 }
 
@@ -178,27 +182,34 @@ static Node* makeAst(Node *tmp) {
 }
 
 static Node* astUop(int kind, Type *tp, Node *operand) {
-    return makeAst(new Node{.kind = kind, .tp = new Type(*tp),
-            .operand = operand});
+    Node *r = new Node(kind, tp);
+    r->operand = operand;
+    return makeAst(r);
 }
 
 static Node* astBinop(Type *tp, int kind, Node *left, Node *right) {
-    Node *r = makeAst(new Node{kind, tp});
+    Node *r = makeAst(new Node(kind, tp));
     r->left = new Node(*left);
     r->right = new Node(*right);
     return r;
 }
 
-static Node* astInitType(Type* tp, long val) {
-    return makeAst(new Node{AST_LITERAL, tp, .ival = val});
+static Node* astIntType(Type* tp, long val) {
+    Node *r = new Node(AST_LITERAL, tp);
+    r->ival = val;
+    return makeAst(r);
 }
 
 static Node* astFloattype(Type *tp, double val) {
-    return makeAst(new Node{AST_LITERAL, tp, .fval = val});
+    auto r = new Node(AST_LITERAL, tp);
+    r->fval = val;
+    return makeAst(r);
 }
 
 static Node* astLvar(Type *tp, char *name) {
-    Node *r = makeAst(new Node{AST_LVAR, tp, .varname = name});
+    auto r = new Node(AST_LVAR, tp);
+    r->varname = name;
+    r = makeAst(r);
     if (localenv) {
         mapInsert(localenv, name, r);
     } 
@@ -207,122 +218,160 @@ static Node* astLvar(Type *tp, char *name) {
 }
 
 static Node* astGvar(Type *tp, char *name) {
-    Node *r = new Node{AST_GVAR, tp, .varname = newChar(name),
-        .glabel = newChar(name)};
+    auto r = new Node(AST_GVAR, tp);
+    r->varname = r->glabel = name;
+    r = makeAst(r);
     mapInsert(globalenv, name, r);
     return r;
 }
 
 static Node* astStaticLvar(Type *tp, char *name) {
-    Node *r = makeAst(new Node{AST_GVAR, new Type(*tp),
-            .varname = newChar(name), .glabel = makeStaticLabel(name)});
+    auto r = new Node(AST_GVAR, tp);
+    r->varname = name;
+    r->glabel = makeStaticLabel(name);
+    r = makeAst(r);
     assert(localenv);
     mapInsert(localenv, name, r);
     return r;
 }
 
 static Node* astTypedef(Type *tp, char *name) {
-    Node *r = makeAst(new Node{AST_TYPEDEF, new Type(*tp)});
+    auto r = makeAst(new Node(AST_TYPEDEF, tp));
     mapInsert(env(), name, r);
     return r;
 }
 
 static Node* astString(char *str, int len) {
     Type *tp = makeArraytype(type_char, len);
-    return makeAst(new Node{AST_LITERAL, new Type(*tp),
-            .sval = newChar(str)});
+    auto r = new Node(AST_LITERAL, tp);
+    r->sval = str;
+    return makeAst(r);
 }
 
 static Node* astFuncall(Type *ftype, char *fname, nvec *args) {
-    return makeAst(new Node{AST_FUNCALL, new Type(*ftype->rettype),
-        .fname = newChar(fname), .args = args,
-        .ftype = new Type(*ftype)});
+    auto r = new Node(AST_FUNCALL, ftype->rettype);
+    r->fname = fname;
+    r->args = args;
+    r->ftype = ftype;
+    return makeAst(r);
 }
 
 static Node* astFuncdesg(Type *tp, char *fname) {
-    return makeAst(new Node{AST_FUNCDESG, new Type(*tp),
-            .fname = newChar(fname)});
+    auto r = new Node(AST_FUNCDESG, tp);
+    r->fname = fname;
+    return makeAst(r);
 }
 
 static Node* astFuncptrcall(Node *fptr, nvec *args) {
     assert(fptr->tp->kind == KIND_PTR);
     assert(fptr->tp->ptr->kind == KIND_FUNC);
-    return makeAst(new Node{AST_FUNCPTR_CALL,
-            new Type(*fptr->tp->ptr->rettype),
-            .fptr = new Node(*fptr), .args = args});
+    auto r = new Node(AST_FUNCPTR_CALL, fptr->tp->ptr->rettype);
+    r->fptr = fptr;
+    r->args = args;
+    return makeAst(r);
 }
 
 static Node* astFunc(Type *tp, char *fname, nvec *params,
         Node *body, nvec *localvars) {
-    return makeAst(new Node{AST_FUNC, new Type(*tp),
-            .fname = newChar(fname), .params = params,
-            .localvars = localvars, .body = new Node(*body)});
+    auto r = new Node(AST_FUNC, tp);
+    r->fname = fname;
+    r->params = params;
+    r->localvars = localvars;
+    r->body = body;
+    return makeAst(r);
 }
 static Node* astDecl(Node *var, nvec *init) {
-    return makeAst(new Node{AST_DECL, .declvar = new Node(*var),
-            .declinit = init});
+    auto r = new Node(AST_DECL);
+    r->declvar = var;
+    r->declinit = init;
+    return makeAst(r);
 }
 
 static Node* astInit(Node *val, Type *totype, int off) {
-    return makeAst(new Node{AST_INIT, .initval = new Node(*val),
-            .initoff = off, .totype = new Type(*totype)});
+    auto r = new Node(AST_INIT);
+    r->initval = val;
+    r->initoff = off;
+    r->totype = totype;
+    return makeAst(r);
 }
 
 static Node* astConv(Type *totype, Node *val) {
-    return makeAst(new Node{AST_CONV, new Type(*totype),
-            .operand = new Node(*val)});
+    auto r = new Node(AST_CONV, totype);
+    r->operand = val;
+    return makeAst(r);
 }
 
 static Node* astIf(Node *cond, Node *then, Node *els) {
-    return makeAst(new Node{AST_IF, .cond = new Node(*cond),
-            .then = new Node(*then), .els = new Node(*els)});
+    auto r = new Node(AST_IF);
+    r->cond = cond;
+    r->then = then;
+    r->els = els;
+    return makeAst(r);
 }
 
 static Node* astTernary(Type *tp, Node *cond, Node *then, Node *els) {
-    return makeAst(new Node{AST_TERNARY, new Type(*tp),
-            .cond = new Node(*cond), .then = new Node(*then),
-            .els = new Node(*els)});
+    auto r = new Node(AST_TERNARY, tp);
+    r->cond = cond;
+    r->then = then;
+    r->els = els;
+    return makeAst(r);
 }
 
 static Node* astReturn(Node *retval) {
-    return makeAst(new Node{AST_RETURN, .retval = new Node(*retval)});
+    auto r = new Node(AST_RETURN);
+    r->retval = retval;
+    return makeAst(r);
 }
 
 static Node* astCompoundstmt(nvec *stmts) {
-    return makeAst(new Node{AST_COMPOUND_STMT, .stmts = stmts});
+    auto r = new Node(AST_COMPOUND_STMT);
+    r->stmts = stmts;
+    return makeAst(r);
 }
 
 static Node* astStructref(Type *tp, Node *struc, char *name) {
-    return makeAst(new Node{AST_STRUCT_REF, new Type(*tp),
-            .struc = new Node(*struc), .field = newChar(name)});
+    auto r = new Node(AST_STRUCT_REF, tp);
+    r->struc = struc;
+    r->field = name;
+    return makeAst(r);
 }
 
 static Node* astGoto(char *label) {
-    return makeAst(new Node{AST_GOTO, .label = newChar(label)});
+    auto r = new Node(AST_GOTO);
+    r->label = label;
+    return makeAst(r);
 }
 
 static Node* astJump(char *label) {
-    return makeAst(new Node{AST_GOTO, .label = newChar(label),
-            .newlabel = newChar(label)});
+    auto r = new Node(AST_GOTO);
+    r->label = label;
+    r->newlabel = label;
+    return makeAst(r);
 }
 
 static Node* astComputedgoto(Node *expr) {
-    return makeAst(new Node{AST_COMPUTED_GOTO,
-            .operand = new Node(*expr)});
+    auto r = new Node(AST_COMPUTED_GOTO);
+    r->operand = expr;
+    return makeAst(r);
 }
 
 static Node* astLabel(char *label) {
-    return makeAst(new Node{AST_LABEL, .label = newChar(label)});
+    auto r = new Node(AST_LABEL);
+    r->label = label;
+    return makeAst(r);
 }
 
 static Node* astDest(char *label) {
-    return makeAst(new Node{AST_LABEL, .label = newChar(label),
-            .newlabel = newChar(label)});
+    auto r = new Node(AST_LABEL);
+    r->label = label;
+    r->newlabel = label;
+    return makeAst(r);
 }
 
 static Node* astLabelAddr(char *label) {
-    return makeAst(new Node{OP_LABEL_ADDR, makePtrType(type_void),
-            .label = newChar(label)});
+    auto r = new Node(OP_LABEL_ADDR, makePtrType(type_void));
+    r->label = label;
+    return makeAst(r);
 }
 
 static Type* makeType(Type *tmpl) {
@@ -544,15 +593,15 @@ static bool isSameStruct(Type *a, Type *b) {
             return isSameStruct(a->ptr, b->ptr);
         case KIND_STRUCT: {
             if (a->isstruct != b->isstruct) return 0;
-            std::vector<Type*> *ka = dictKeys(a->fields);
-            std::vector<Type*> *kb = dictKeys(b->fields);
+            auto ka = a->fields->key;
+            auto kb = b->fields->key;
             if (ka->size() != kb->size()) return 0;
             for (unsigned i = 0; i < ka->size(); i++)
-                if (!isSameStruct((*ka)[i], (*kb)[i]))
+                if (!isSameStruct((Type*)(*ka)[i], (Type*)(*kb)[i]))
                     return 0;
             return 1;
         }
-        defalut: return 1;
+        default: return 1;
     }
 }
 
@@ -561,19 +610,19 @@ static void ensureAssignable(Type *to, Type *from) {
             (isArithtype(from) || from->kind == KIND_PTR))
         return;
     if (isSameStruct(to, from)) return;
-    error("incompatible kind: <%s> <%s>", ty2s(to), ty2s(from));
+    error("incompatible kind: <%s> <%s>", tp2s(to), tp2s(from));
 }
 
 static int evalStructref(Node *node, int offset) {
     if (node->kind == AST_STRUCT_REF)
-        return evalStructref(node->struc, node->td->offset + offset);
+        return evalStructref(node->struc, node->tp->offset + offset);
     return evalIntexpr(node, NULL) + offset;
 }
 
 int evalIntexpr(Node *node, Node **addr) {
     switch (node->kind) {
         case AST_LITERAL:
-            if (isInittype(node->td))
+            if (isInittype(node->tp))
                 return node->ival;
             error("Integer expression expected, but got %s", node2s(node));
         case '!': return !evalIntexpr(node->operand, addr);
@@ -591,10 +640,10 @@ int evalIntexpr(Node *node, Node **addr) {
             goto error;
             goto error;
         case AST_DEREF:
-            if (node->operand->ty->kind == KIND_PTR)
+            if (node->operand->tp->kind == KIND_PTR)
                 return evalIntexpr(node->operand, addr);
             goto error;
-        case astTernary: {
+        case AST_TERNARY: {
             long cond = evalIntexpr(node->cond, addr);
             if (cond)
                 return node->then ? evalIntexpr(node->then, addr) : cond;
@@ -622,12 +671,13 @@ int evalIntexpr(Node *node, Node **addr) {
 #undef L
 #undef R
         default:
+        error:
             error("Integer expression expected, but got %s", node2s(node));
     }
 }
 
 static int readIntexpr() {
-    return evalIntexpr(readConditionalExpr(), NULL);
+    return evalIntexpr(readConditionExpr(), NULL);
 }
 
 /*
@@ -647,21 +697,21 @@ static Node* readInt(Token *tk) {
     char *s = tk->sval;
     char *end;
     long v = !strncasecmp(s, "0b", 2) ?
-        stroul(s + 2, &end, 2) : stroul(s, &end, 0);
+        strtoul(s + 2, &end, 2) : strtoul(s, &end, 0);
     Type *tp = readIntSuffix(end);
-    if (tp) return astInitType(tp, v);
+    if (tp) return astIntType(tp, v);
     if (*end != '\0')
-        errort(tl, "invalid character '%c': %s", *end, s);
+        errort(tk, "invalid character '%c': %s", *end, s);
     bool base10 = (*s - '0');
     if (base10) {
         tp = !(v & ~(long)INT_MAX) ? type_int : type_long;
-        return astInitType(ty, v);
+        return astIntType(tp, v);
     }
-    ty = !(v & ~(unsigned long)INT_MAX) ? type_int
+    tp = !(v & ~(unsigned long)INT_MAX) ? type_int
         : !(v & ~(unsigned long)UINT_MAX) ? type_uint
         : !(v & ~(unsigned long)LONG_MAX) ? type_long
         : type_ulong;
-    return astInitType(tp, v);
+    return astIntType(tp, v);
 }
 
 static Node* readFloat(Token *tk) {
@@ -702,7 +752,7 @@ static Node* readSizeofOperand() {
     int sz = (tp->kind == KIND_VOID || tp->kind == KIND_FUNC)
         ? 1 : tp->size;
     assert(sz >= 0);
-    return astInitType(type_ulong, sz);
+    return astIntType(type_ulong, sz);
 }
 /*
  * alignof op
@@ -712,14 +762,14 @@ static Node* readAlignofOperand() {
     expect('(');
     Type *tp = readCastType();
     expect(')');
-    return astInitType(type_ulong, tp->align);
+    return astIntType(type_ulong, tp->align);
 }
 
 /*
  * function args
  */
 
-static readFuncArgs(std::vector<Node*> *params) {
+static nvec* readFuncArgs(std::vector<Type*> *params) {
     std::vector<Node*> *args = new std::vector<Node*>;
     int i = 0;
     while (1) {
@@ -749,6 +799,8 @@ static Node* readFuncall(Node *fp) {
         auto args = readFuncArgs(desg->tp->params);
         return astFuncall(desg->tp, desg->fname, args);
     }
+    auto args = readFuncArgs(fp->tp->ptr->params);
+    return astFuncptrcall(fp, args);
 }
 
 /*
@@ -817,7 +869,7 @@ static Node* readPrimaryExpr() {
     switch (tk->kind) {
         case TIDENT: return readVarOrFunc(tk->sval);
         case TNUMBER: return readNumber(tk);
-        case TCHAR: return astInitType(charType(), tk->c);
+        case TCHAR: return astIntType(charType(), tk->c);
         case TSTRING: return astString(tk->sval, tk->slen);
         case TKEYWORD:
             ungetToken(tk);
@@ -917,7 +969,7 @@ static Node* readUnaryMinus() {
     Node* expr = readCastExpr();
     ensureArithtype(expr);
     if (isInittype(expr->tp))
-        return binop('-', conv(astInitType(expr->tp, 0)), conv(expr));
+        return binop('-', conv(astIntType(expr->tp, 0)), conv(expr));
     return binop('-', astFloattype(expr->tp, 0), expr);
 }
 
@@ -1176,7 +1228,7 @@ static int computePadding(int offset, int align) {
 static void squashUnnamedStruct(Dict<Type> *dc, Type *unnamed, int offset) {
     auto keys = unnamed->fields->key;
     for (unsigned i = 0; i < keys->size(); i++) {
-        char *name = (*keys)[i];
+        char *name = (char*)(*keys)[i];
         Type *t = copyType(dictGet(unnamed->fields, name));
         t->offset += offset;
         dictPut(dc, name, t);
@@ -1376,7 +1428,7 @@ static Type* readEnumDef() {
             errort(tk, "identifer expected, but got %s", tk2s(tk));
         char *name = tk->sval;
         if (nextToken('=')) val = readIntexpr();
-        Node *constval = astInitType(type_int, val++);
+        Node *constval = astIntType(type_int, val++);
         mapInsert(env(), name, constval);
         if (nextToken('.')) continue;
         if (nextToken('}')) break;
@@ -1395,10 +1447,10 @@ static void assignString(std::vector<Node*> *inits,
         tp->len = tp->size = strlen(p) + 1;
     int i = 0;
     for (; i < tp->len && *p; i++)
-        inits->push_back(astInit(astInitType(type_char, *p++),
+        inits->push_back(astInit(astIntType(type_char, *p++),
                     type_char, off + i));
     for (; i < tp->len; i++)
-        inits->push_back(astInit(astInitType(type_char, 0),
+        inits->push_back(astInit(astIntType(type_char, 0),
                     type_char, off + i));
 }
 
@@ -1455,7 +1507,7 @@ static void sortInits(std::vector<Node*> *inits) {
 static void readStructInitSub(std::vector<Node*> *inits,
         Type *tp, int off, bool designated) {
     bool has_brace = maybeReadBrace();
-    std::vector<char*> *keys = tp->fields->key;
+    std::vector<void*> *keys = tp->fields->key;
     int i = 0;
     while (1) {
         Token *tk = get();
@@ -1482,7 +1534,7 @@ static void readStructInitSub(std::vector<Node*> *inits,
             keys = tp->fields->key;
             i = 0;
             while (i < keys->size()) {
-                char *s = (*keys)[i++];
+                char *s = (char*)(*keys)[i++];
                 if (strcmp(fieldname, s) == 0) break;
             }
             designated = 1;
@@ -1490,7 +1542,7 @@ static void readStructInitSub(std::vector<Node*> *inits,
         else {
             ungetToken(tk);
             if (i == keys->size()) break;
-            fieldname = (*keys)[i++];
+            fieldname = (char*)(*keys)[i++];
             fieldtype = dictGet(tp->fields, fieldname);
         }
         readInitElem(inits, fieldtype,
@@ -1945,7 +1997,7 @@ static void readDecl(nvec *block, bool isglobal) {
         Type *tp = readDeclarator(&name, copyIncompletetype(basetype),
                 NULL, DECL_BODY);
         tp->isstatic = (sclass == S_STATIC);
-        if (sclass = S_TYPEDEF) astTypedef(tp, name);
+        if (sclass == S_TYPEDEF) astTypedef(tp, name);
         else if (tp->isstatic && !isglobal) {
             ensureNotvoid(tp);
             readStaticLocalVar(tp, name);
@@ -2050,9 +2102,11 @@ static void skipParentheses(std::vector<Token*> *buf) {
 }
 
 static bool isFuncdef() {
+    puts("isfuncdef");
     auto buf = new std::vector<Token*>;
     bool r = 0;
     while (1) {
+        puts("*************");
         Token *tk = get();
         buf->push_back(tk);
         if (tk->kind == TEOF)
@@ -2066,9 +2120,11 @@ static bool isFuncdef() {
         if (tk->kind != TIDENT) continue;
         if (!isKeyword(peek(), '(')) continue;
         buf->push_back(get());
+        skipParentheses(buf);
         r = (isKeyword(peek(), '{') || isType(peek()));
         break;
     }
+    printf("%d\n", buf->size());
     while (buf->size() > 0) {
         buf->pop_back();
         assert(buf->size() > 0);
@@ -2241,12 +2297,12 @@ static Node* makeSwitchJump(Node *var, Case *c) {
     Node *cond;
     if (c->beg == c->end)
         cond = astBinop(type_int, OP_EQ, var,
-                astInitType(type_int, c->beg));
+                astIntType(type_int, c->beg));
     else {
         auto x = astBinop(type_int, OP_LE,
-                astInitType(type_int, c->beg), var);
+                astIntType(type_int, c->beg), var);
         auto y = astBinop(type_int, OP_LE, var,
-                astInitType(type_int, c->end));
+                astIntType(type_int, c->end));
         cond = astBinop(type_int, OP_LOGAND, x, y);
     }
     return astIf(cond, astJump(c->label), NULL);
@@ -2441,6 +2497,7 @@ static void readDeclOrStmt(std::vector<Node*> *list) {
 std::vector<Node*>* readToplevels() {
     toplevels = new std::vector<Node*>;
     while (1) {
+        puts("parse");
         if (peek()->kind == TEOF) return toplevels;
         if (isFuncdef()) toplevels->push_back(readFuncdef());
         else readDecl(toplevels, 1);
@@ -2458,4 +2515,5 @@ void parseInit() {
     std::vector<Type*> *two_voidptrs = new std::vector<Type*>;
     two_voidptrs->push_back(makePtrType(type_void));
     two_voidptrs->push_back(makePtrType(type_void));
+    puts("parseInit finished");
 }

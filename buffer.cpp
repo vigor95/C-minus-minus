@@ -102,3 +102,9 @@ char* quoteCstring(char *p) {
     while (*p) print(b, *p++);
     return bufBody(b);
 }
+
+const char* quoteChar(char c) {
+    if (c == '\\') return "\\\\";
+    if (c == '\'') return "\\'";
+    return format("%c", c);
+}

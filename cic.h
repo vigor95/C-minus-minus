@@ -10,8 +10,9 @@
 #include <sys/stat.h>
 #include <iostream>
 #include <algorithm>
+#include <climits>
 
-char* newChar(char *src) {
+inline char* newChar(char *src) {
     char *ret = NULL;
     if (src) {
         ret = new char[strlen(src) + 1];
@@ -20,7 +21,7 @@ char* newChar(char *src) {
     return ret;
 }
 
-char* newChar(const char *src) {
+inline char* newChar(const char *src) {
     char *ret = NULL;
     if (src) {
         ret = new char[strlen(src) + 1];
@@ -77,7 +78,7 @@ struct Map {
 template <class T>
 struct Dict {
     Map<T> *m;
-    std::vector<char*> *key;
+    std::vector<void*> *key;
 };
 
 struct Buffer {
@@ -294,6 +295,9 @@ struct Node {
             Type *fieldtype;
         };
     };
+    Node() = default;
+    Node(int k): kind(k) {}
+    Node(int k, Type *t): kind(k), tp(t) {}
     /*Node() = default;
     Node(int k, Type *t, Node *o): kind(k), tp(t ? new Type(*t) : NULL),
         operand(o ? new Node(*o) : NULL) {}
@@ -353,22 +357,36 @@ char *vformat(const char *fmt, va_list ap);
 char *format(const char *fmt, ...);
 char *quoteCstring(char *p);
 char *quoteCstringLen(char *p, int len);
-char *quoteChar(char c);
+const char *quoteChar(char c);
 
 // debug.cpp
-char* tp2s(Type *tp);
+const char* tp2s(Type *tp);
 char* node2s(Node *node);
 char* tk2s(Token *tk);
 
 // dict.cpp
 template <class T>
-Dict<T>* makeDict();
+Dict<T>* makeDict() {
+    auto r = new Dict<T>;
+    r->m = new Map<T>;
+    r->m->body = new std::map<char*, T*, cmp>;
+    r->key = new std::vector<void*>;
+    return r;
+}
 template <class T>
-Type* dictGet(Dict<T>*, char*);
+T* dictGet(Dict<T> *dict, char *key) {
+    return dict->m->body->find(key)->second;
+}
 template <class T>
-void dictPut(Dict<T>*, char*, T*);
+void dictPut(Dict<T> *dict, char *key, T *val) {
+    if (dict->m->body->find(key) != dict->m->body->end())
+        dict->m->body->erase(key);
+    dict->m->body->insert(std::pair<char*, T*>(key, (T*)val));
+}
 template <class T>
-std::vector<char*, Type*>* dictKeys(Dict<T>*);
+std::vector<void*>* dictKeys(Dict<T> *dict) {
+    return dict->key;
+}
 
 //file.cpp
 File *makeFile(FILE *file, char *name);
@@ -410,4 +428,19 @@ const char* tokenPos(Token *tk);
 
 // map.cpp
 template <class T>
-Map<T>* makeMapParent(Map<T>*);
+Map<T>* makeMapParent(Map<T> *p) {
+    Map<T> *r = new Map<T>;
+    r->parent = p;
+    return r;
+} 
+
+// parse.cpp
+char* makeTempname();
+char* makeLabel();
+bool isInttype(Type*);
+bool isFlotype(Type*);
+int makeIntexpr(Node*, Node**);
+Node* readExpr();
+void parseInit();
+char* fullpath(char *path);
+std::vector<Node*>* readToplevels();

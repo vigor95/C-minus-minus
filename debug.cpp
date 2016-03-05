@@ -27,17 +27,17 @@ static const char* doTp2s(Dict<Type> *dc, Type *tp) {
             return format("[%d]%s", tp->len, doTp2s(dc, tp->ptr));
         case KIND_STRUCT: {
             const char *kind = tp->isstruct ? "struct" : "union";
-            if (dictGet(dc, format("%p", tp)))
+            if (dictGet<Type>(dc, format("%p", tp)))
                 return format("(%s)", kind);
             dictPut(dc, format("%p", tp), (Type*)1);
             if (tp->fields) {
                 Buffer *b = makeBuffer();
                 bufPrintf(b, "(%s", kind);
-                std::vector<char*> *keys = tp->fields->key;
+                std::vector<void*> *keys = tp->fields->key;
                 //std::vector<char*> *keys = dictKeys(tp->fields);
                 for (unsigned i = 0; i < keys->size(); i++) {
-                    char *key = (*keys)[i];
-                    Type *fieldtype = dictGet(tp->fields, key);
+                    char *key = (char*)(*keys)[i];
+                    Type *fieldtype = dictGet<Type>(tp->fields, key);
                     bufPrintf(b, " (%s)", doTp2s(dc, fieldtype));
                 }
                 bufPrintf(b, ")");
@@ -62,7 +62,7 @@ static const char* doTp2s(Dict<Type> *dc, Type *tp) {
     }
 }
 
-char* tp2s(Type *tp) {
+const char* tp2s(Type *tp) {
     return doTp2s(makeDict<Type>(), tp);
 }
 
@@ -166,7 +166,7 @@ char* tk2s(Token *tk) {
                 default: return format("%c", tk->id);
             }
         case TCHAR:
-            return format("%s'%s'", "", quoteChar(tk->c));
+            return format("'%s'", quoteChar((char)tk->c));
         case TNUMBER: return tk->sval;
         case TSTRING:
             return format("%s\"%s\"", "", quoteCstring(tk->sval));
