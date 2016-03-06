@@ -4,8 +4,6 @@
 
 static char *infile;
 static std::string outfile;
-std::string table[] = {"indent", "keyword", "number", "char","string",
-"eof", "!invalid", "min_cpp_token", "newline", "space", "macro"};
 
 int main(int argc, char **argv) {
     printf("Hello world!\n");
@@ -19,6 +17,7 @@ int main(int argc, char **argv) {
         Token *tk = lex();
         if (tk->kind != TNEWLINE) {
             std::cout << tk->line << ": " << table[tk->kind] << std::endl;
+            if (tk->kind == TIDENT) puts(tk->sval);
         }
         if (tk->kind == TEOF) break;
     }*/

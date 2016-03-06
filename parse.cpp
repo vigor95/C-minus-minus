@@ -17,6 +17,7 @@ static nmap *globalenv = new nmap;
 static nmap *localenv;
 static tmap *tags = new tmap;
 static nmap *labels;
+static auto keywords = new Map<void>;
 
 typedef std::vector<Node*> nvec;
 typedef std::vector<Type*> tvec;
@@ -97,20 +98,35 @@ enum {
 static Type* makePtrType(Type *tp);
 static Type* makeArraytype(Type *tp, int size);
 
-void mapInsert(nmap *m, char *key, Node *val) {
+template <class T>
+void mapInsert(Map<T> *m, char *key, T *val) {
     if (m->body->find(key) != m->body->end())
         m->body->erase(key);
-    m->body->insert(std::pair<char*, Node*>(key, val));
+    m->body->insert(std::pair<char*, T*>(key, val));
 }
 
-void mapInsert(tmap *m, char *key, Type *val) {
-    if (m->body->find(key) != m->body->end())
-        m->body->erase(key);
-    m->body->insert(std::pair<char*, Type*>(key, val));
+static Token* copyToken(Token *tk) {
+    Token *r = new Token(*tk);
+    return r;
+}
+
+static Token* maybeConvertKeyword(Token *tk) {
+    if (tk->kind != TIDENT) return tk;
+    int id = (intptr_t)(keywords->get(tk->sval));
+    if (!id) return tk;
+    Token *r = copyToken(tk);
+    r->kind = TKEYWORD;
+    r->id = id;
+    return r;
 }
 
 Token* readToken() {
     return lex();
+    Token *tk;
+    while (1) {
+        tk = lex();
+        return maybeConvertKeyword(tk);
+    }
 }
 
 Token* peekToken() {
@@ -127,7 +143,7 @@ static void linkString(Token *tk) {
     Buffer *b = makeBuffer();
     bufAppend(b, tk->sval, tk->slen - 1);
     while (peek()->kind == TSTRING) {
-        Token *tmp = lex();
+        Token *tmp = readToken();
         bufAppend(b, tmp->sval, tmp->slen - 1);
     }
     bufWrite(b, '\0');
@@ -136,7 +152,7 @@ static void linkString(Token *tk) {
 }
 
 static Token* get() {
-    Token *r = lex();
+    Token *r = readToken();
     if (r->kind == TINVALID)
         errort(r, "stray character in program: '%c'", r->c);
     if (r->kind == TSTRING && peek()->kind == TSTRING)
@@ -429,7 +445,7 @@ static Type* makeStubType() {
     return makeType(new Type(KIND_STUB));
 }
 
-bool isInittype(Type *tp) {
+bool isInttype(Type *tp) {
     switch (tp->kind) {
         case KIND_BOOL: case KIND_CHAR: case KIND_SHORT:
         case KIND_LONG: case KIND_INT: case KIND_LLONG:
@@ -447,7 +463,7 @@ bool isFlotype(Type *tp) {
 }
 
 static bool isArithtype(Type *tp) {
-    return isInittype(tp) || isFlotype(tp); 
+    return isInttype(tp) || isFlotype(tp); 
 }
 
 static bool isString(Type *tp) {
@@ -462,8 +478,8 @@ static void ensureLvalue(Node *node) {
     }
 }
 
-static void ensureInittype(Node *node) {
-    if (!isInittype(node->tp))
+static void ensureInttype(Node *node) {
+    if (!isInttype(node->tp))
         error("integer type expected, but got %s", node2s(node));
 }
 
@@ -489,11 +505,14 @@ static Type* copyIncompletetype(Type *tp) {
 }
 
 static Type* getTypedef(char *name) {
-    Node *node = env()->body->find(name)->second;
+    puts(name);
+    auto node = env()->get(name);
+    //Node *node = env()->body->find(name)->second;
     return (node && node->kind == AST_TYPEDEF) ? node->tp : NULL;
 }
 
 static bool isType(Token *tk) {
+    puts("istype");
     if (tk->kind == TIDENT) return getTypedef(tk->sval);
     if (tk->kind != TKEYWORD) return 0;
     switch (tk->kind) {
@@ -547,8 +566,8 @@ static Type* usualArithConv(Type *t, Type *u) {
         u = temp;
     }
     if (isFlotype(t)) return t;
-    assert(isInittype(t) && t->size >= type_int->size);
-    assert(isInittype(u) && u->size >= type_int->size);
+    assert(isInttype(t) && t->size >= type_int->size);
+    assert(isInttype(u) && u->size >= type_int->size);
     if (t->size > u->size) return t;
     assert(t->size == u->size);
     if (t->usig == u->usig) return t;
@@ -622,7 +641,7 @@ static int evalStructref(Node *node, int offset) {
 int evalIntexpr(Node *node, Node **addr) {
     switch (node->kind) {
         case AST_LITERAL:
-            if (isInittype(node->tp))
+            if (isInttype(node->tp))
                 return node->ival;
             error("Integer expression expected, but got %s", node2s(node));
         case '!': return !evalIntexpr(node->operand, addr);
@@ -666,7 +685,7 @@ int evalIntexpr(Node *node, Node **addr) {
         case OP_SAL: return L << R;
         case OP_SAR: return L >> R;
         case OP_SHR: return ((unsigned long)L) >> R;
-        case OP_LOGAND: return L & R;
+        case OP_LOGAND: return L && R;
         case OP_LOGOR: return L || R;
 #undef L
 #undef R
@@ -779,7 +798,7 @@ static nvec* readFuncArgs(std::vector<Type*> *params) {
         if (i < params->size()) paramtype = (*params)[i++];
         else {
             paramtype = isFlotype(arg->tp) ? type_double :
-                isInittype(arg->tp) ? type_int : arg->tp;
+                isInttype(arg->tp) ? type_int : arg->tp;
         }
         ensureAssignable(paramtype, arg->tp);
         if (paramtype->kind != arg->tp->kind)
@@ -794,7 +813,7 @@ static nvec* readFuncArgs(std::vector<Type*> *params) {
 }
 
 static Node* readFuncall(Node *fp) {
-    if (fp->kind = AST_ADDR && fp->operand->kind == AST_FUNCDESG) {
+    if (fp->kind == AST_ADDR && fp->operand->kind == AST_FUNCDESG) {
         Node *desg = fp->operand;
         auto args = readFuncArgs(desg->tp->params);
         return astFuncall(desg->tp, desg->fname, args);
@@ -808,7 +827,8 @@ static Node* readFuncall(Node *fp) {
  */
 
 static Node* readVarOrFunc(char *name) {
-    Node *v = env()->body->find(name)->second;
+    auto v = env()->get(name);
+    //Node *v = env()->body->find(name)->second;
     if (!v) {
         Token *tk = peek();
         if (!isKeyword(tk, '('))
@@ -968,7 +988,7 @@ static Node* readUnaryDeref(Token *tk) {
 static Node* readUnaryMinus() {
     Node* expr = readCastExpr();
     ensureArithtype(expr);
-    if (isInittype(expr->tp))
+    if (isInttype(expr->tp))
         return binop('-', conv(astIntType(expr->tp, 0)), conv(expr));
     return binop('-', astFloattype(expr->tp, 0), expr);
 }
@@ -976,7 +996,7 @@ static Node* readUnaryMinus() {
 static Node* readUnaryBitnot(Token *tk) {
     Node *expr = readCastExpr();
     expr = conv(expr);
-    if (!isInittype(expr->tp))
+    if (!isInttype(expr->tp))
         errort(tk, "invalid use of ~: %s", node2s(expr));
     return astUop('~', expr->tp, expr);
 }
@@ -1069,8 +1089,8 @@ static Node* readShiftExpr() {
             op = node->tp->usig ? OP_SHR : OP_SAR;
         else break;
         Node *right = readAddiExpr();
-        ensureInittype(node);
-        ensureInittype(right);
+        ensureInttype(node);
+        ensureInttype(right);
         node = astBinop(node->tp, op, conv(node), conv(right));
     }
     return node;
@@ -1119,7 +1139,7 @@ static Node* readBitxorExpr() {
 }
 
 static Node* readBitorExpr() {
-    Node *node = readBitorExpr();
+    Node *node = readBitxorExpr();
     while (nextToken('|'))
         node = binop('|', conv(node), conv(readBitxorExpr()));
     return node;
@@ -1236,7 +1256,7 @@ static void squashUnnamedStruct(Dict<Type> *dc, Type *unnamed, int offset) {
 }
 
 static int readBitsize(char *name, Type *tp) {
-    if (isInittype(tp))
+    if (isInttype(tp))
         error("non-integer type cannot be a bitfield: %s", tp2s(tp));
     Token *tk = peek();
     int r = readIntexpr();
@@ -1249,7 +1269,7 @@ static int readBitsize(char *name, Type *tp) {
 }
 
 static std::vector<std::pair<char*, Type*>* >* readRectypeFieldsSub() {
-    std::vector<std::pair<char*, Type*>* > *r;
+    auto r = new std::vector<std::pair<char*, Type*>*>;
     while (1) {
         if (!isType(peek())) break;
         Type *basetype = readDeclSpec(NULL);
@@ -1369,7 +1389,8 @@ static Type* readRectypeDef(bool is_struct) {
     char *tag = readRectypeTag();
     Type *r;
     if (tag) {
-        r = tags->body->find(tag)->second;
+        r = tags->get(tag);
+        //r = tags->body->find(tag)->second;
         if (r && (r->kind == KIND_ENUM || r->isstruct != is_struct))
             error("declarations of %s does not match", tag);
         if (!r) {
@@ -1408,12 +1429,13 @@ static Type* readEnumDef() {
         tk = get();
     }
     if (tag) {
-        Type *tp = tags->body->find(tag)->second;
+        auto tp = tags->get(tag);
+        //Type *tp = tags->body->find(tag)->second;
         if (tp && tp->kind != KIND_ENUM)
             errort(tk, "declaration of %s does not match", tag);
     }
     if (!isKeyword(tk, '{')) {
-        if (!tag || !tags->body->find(tag)->second)
+        if (!tag || !tags->get(tag))
             errort(tk, "enum tag %s is not defined", tag);
         ungetToken(tk);
         return type_int;
@@ -2087,6 +2109,7 @@ static Node* readFuncBody(Type *functype, char *fname,
     Node *r = astFunc(functype, fname, params, body, localvars);
     current_func_type = NULL;
     localenv = NULL;
+    localvars = NULL;
     return r;
 }
 
@@ -2106,8 +2129,9 @@ static bool isFuncdef() {
     auto buf = new std::vector<Token*>;
     bool r = 0;
     while (1) {
-        puts("*************");
+        puts("get begin");
         Token *tk = get();
+        std::cout << table[tk->kind] << std::endl;
         buf->push_back(tk);
         if (tk->kind == TEOF)
             error("premature end of input");
@@ -2118,17 +2142,19 @@ static bool isFuncdef() {
             continue;
         }
         if (tk->kind != TIDENT) continue;
-        if (!isKeyword(peek(), '(')) continue;
+        if (!isKeyword(peek(), '(')) {
+            continue;
+        }
         buf->push_back(get());
         skipParentheses(buf);
         r = (isKeyword(peek(), '{') || isType(peek()));
         break;
     }
-    printf("%d\n", buf->size());
     while (buf->size() > 0) {
-        buf->pop_back();
+        ungetToken((*buf)[buf->size()-1]);
         assert(buf->size() > 0);
-        ungetToken(buf->back());
+        buf->pop_back();
+        //ungetToken(buf->back());
     } 
     return r;
 }
@@ -2160,6 +2186,7 @@ static Node* readFuncdef() {
     if (functype->oldstyle) {
         if (params->size() == 0) functype->hasva = 0;
         readOldstyleParamType(params);
+        functype->params = paramTypes(params);
     }
     functype->isstatic = (sclass == S_STATIC);
     astGvar(functype, name);
@@ -2336,7 +2363,7 @@ static void checkCaseDuplicates(std::vector<Case*> *cases) {
 static Node* readSwitchStmt() {
     expect('(');
     Node *expr = conv(readExpr());
-    ensureInittype(expr);
+    ensureInttype(expr);
     expect(')');
 
     auto end = makeLabel();
@@ -2497,7 +2524,6 @@ static void readDeclOrStmt(std::vector<Node*> *list) {
 std::vector<Node*>* readToplevels() {
     toplevels = new std::vector<Node*>;
     while (1) {
-        puts("parse");
         if (peek()->kind == TEOF) return toplevels;
         if (isFuncdef()) toplevels->push_back(readFuncdef());
         else readDecl(toplevels, 1);
@@ -2510,6 +2536,11 @@ static void defineBuiltin(char *name, Type *rettype,
 }
 
 void parseInit() {
+#define op(id, str) mapInsert(keywords, str, (void*)id);
+#define keyword(id, str, _) mapInsert(keywords, str, (void*)id);
+#include "keyword.inc"
+#undef keyword
+#undef op
     std::vector<Type*> *voidptr = new std::vector<Type*>;
     voidptr->push_back(makePtrType(type_void));
     std::vector<Type*> *two_voidptrs = new std::vector<Type*>;

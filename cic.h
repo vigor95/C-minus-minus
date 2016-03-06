@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <climits>
 
+static std::string table[] = {"indent", "keyword", "number", "char","string",
+"eof", "!invalid", "min_cpp_token", "newline", "space", "macro"};
+
 inline char* newChar(char *src) {
     char *ret = NULL;
     if (src) {
@@ -65,9 +68,9 @@ template <class T>
 struct Map {
     Map<T> *parent;
     std::map<char*, T*, cmp> *body;
-    Map(): parent(NULL), body(NULL) {}
+    Map(): parent(NULL), body(new std::map<char*, T*, cmp>) {}
     Map(Map<T> *p): parent(p), body(new std::map<char*, T*, cmp>) {}
-    Node* get(char *key) {
+    T* get(char *key) {
         auto it = body->find(key);
         if (it != body->end()) return it->second;
         if (parent) return parent->get(key);
@@ -120,24 +123,18 @@ struct Token {
     };
     Token() {}
     Token(int k): kind(k) {}
-    Token(int k, const char *p): kind(k) {
-        printf("Token(int k, const char *p)\n");
-        sval = new char[strlen(p) + 1];
-        strcpy(sval, p);
+    Token(int k, char *p): kind(k), sval(p) {
+        //sval = new char[strlen(p) + 1];
+        //strcpy(sval, p);
     }
-    Token(int k, const char *s, int len, int _enc):
-        kind(k), slen(len), enc(_enc) {
-            printf("Token(int k, const char *s, int len, int _enc)\n");
-            sval = new char[strlen(s) + 1];
-            strcpy(sval, s);
+    Token(int k, char *s, int len, int _enc):
+        kind(k), sval(s), slen(len), enc(_enc) {
+            //sval = new char[strlen(s) + 1];
+            //strcpy(sval, s);
         }
     Token(int k, int i): kind(k), id(i) {}
     Token(int k, char _c): kind(k), c(_c) {}
     Token(int k, int _c, int _enc): kind(k), c(_c), enc(_enc) {}
-    Token& operator=(const Token &other) {
-        kind = other.kind;
-        return *this;
-    }
 };
 
 struct Node;

@@ -44,11 +44,11 @@ static Token* makeToken(Token *tmpl) {
     return r;
 }
 
-static Token* makeIdent(const char *p) {
+static Token* makeIdent(char *p) {
     return makeToken(new Token(TIDENT, p));
 }
 
-static Token* makeStrtok(const char *s, int len, int enc) {
+static Token* makeStrtok(char *s, int len, int enc) {
     return makeToken(new Token(TSTRING, s, len, enc));
 }
 
@@ -56,7 +56,7 @@ static Token* makeKeyword(int id) {
     return makeToken(new Token(TKEYWORD, id));
 }
 
-static Token* makeNumber(const char *s) {
+static Token* makeNumber(char *s) {
     return makeToken(new Token(TNUMBER, s));
 }
 
@@ -337,7 +337,7 @@ static Token* doReadToken() {
 }
 
 static bool bufferEmpty() {
-    return buffers->size() == 1 && (*buffers)[0]->size() == 0;
+    return buffers->size() == 1 && buffers->front()->size() == 0;
 }
 
 bool isKeyword(Token *tk, int c) {
@@ -370,10 +370,12 @@ Token* lexString(char *s) {
 
 Token* lex() {
     //if (buffers == NULL) buffers = new std::vector<std::vector<Token*> >;
+    //auto buf = buffers->back();
     std::vector<Token*> *buf = 
         (*buffers)[buffers->size() - 1];
     if (buf->size() > 0) {
         buf->pop_back();
+        //return buf->back();
         return (*buf)[buf->size()];
     }
     if(buffers->size() > 1) return new Token(TEOF);
