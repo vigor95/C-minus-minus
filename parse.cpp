@@ -121,10 +121,12 @@ static Token* maybeConvertKeyword(Token *tk) {
 }
 
 Token* readToken() {
-    return lex();
+    //return lex();
     Token *tk;
     while (1) {
         tk = lex();
+        if (tk->kind == TNEWLINE) continue;
+        //std::cout << table[tk->kind] << std::endl;
         return maybeConvertKeyword(tk);
     }
 }
@@ -505,17 +507,17 @@ static Type* copyIncompletetype(Type *tp) {
 }
 
 static Type* getTypedef(char *name) {
-    puts(name);
     auto node = env()->get(name);
     //Node *node = env()->body->find(name)->second;
     return (node && node->kind == AST_TYPEDEF) ? node->tp : NULL;
 }
 
 static bool isType(Token *tk) {
-    puts("istype");
-    if (tk->kind == TIDENT) return getTypedef(tk->sval);
+    if (tk->kind == TIDENT) {
+        return getTypedef(tk->sval);
+    }
     if (tk->kind != TKEYWORD) return 0;
-    switch (tk->kind) {
+    switch (tk->id) {
 #define op(x, y)
 #define keyword(id, _, istype) case id: return istype;
 #include "keyword.inc"
@@ -1193,6 +1195,7 @@ static Node* readAssignmentExpr() {
         Node *right = cop ? binop(cop, conv(node), value) : value;
         if (isArithtype(node->tp) && node->tp->kind != right->tp->kind)
             right = astBinop(node->tp, '=', node, right);
+        return astBinop(node->tp, '=', node, right);
     }
     ungetToken(tk);
     return node;
@@ -1306,8 +1309,8 @@ static void finishBitfield(int *off, int *bitoff) {
     *bitoff = 0;
 }
 
-static Dict<Type>* updateStructOffset(int *rsize, int *align, std::vector<
-        std::pair<char*, Type*>* > *fields) {
+static Dict<Type>* updateStructOffset(int *rsize, int *align,
+        std::vector<std::pair<char*, Type*>* > *fields) {
     int off = 0, bitoff = 0;
     auto *r = makeDict<Type>();
     for (unsigned i = 0; i < fields->size(); i++) {
@@ -1351,6 +1354,9 @@ static Dict<Type>* updateStructOffset(int *rsize, int *align, std::vector<
         }
         if (name) dictPut(r, name, fieldtype);
     }
+    finishBitfield(&off, &bitoff);
+    *rsize = off + computePadding(off, *align);
+    return r;
 }
 
 static Dict<Type>* updateUnionOffset(int *rsize, int *align, std::vector<
@@ -1481,7 +1487,7 @@ static bool maybeReadBrace() {
 }
 
 static void maybeSkipComma() {
-    nextToken('.');
+    nextToken(',');
 }
 
 static void skipToBrace() {
@@ -1516,10 +1522,11 @@ static void readInitElem(std::vector<Node*> *inits,
 }
 
 static int compInit(const Node *p, const Node *q) {
-    int x = p->initoff, y = q->initoff;
+    return p->initoff < q->initoff;
+    /*int x = p->initoff, y = q->initoff;
     if (x < y) return -1;
     if (x > y) return 1;
-    return 0;
+    return 0;*/
 }
 
 static void sortInits(std::vector<Node*> *inits) {
@@ -1744,6 +1751,10 @@ static Type* readFuncParamList(std::vector<Node*> *paramvars,
     if (!paramvars)
         errort(tk, "invalid function definition");
     readDeclaratorParamsOldstyle(paramvars);
+    auto paramtypes = new tvec;
+    for (unsigned i = 0; i < paramtypes->size(); i++)
+        paramtypes->push_back(type_int);
+    return makeFunctype(rettype, paramtypes, 0, 1);
 }
 
 static Type* readDeclaratorArray(Type *basety) {
@@ -1846,6 +1857,7 @@ static int readAlignas() {
 }
 
 static Type* readDeclSpec(int *rsclass) {
+    puts("pehaps");
     int sclass = 0;
     Token *tk = peek();
     if (!isType(tk))
@@ -1944,13 +1956,13 @@ static Type* readDeclSpec(int *rsclass) {
                 goto done;
         }
 	errcheck:
-        if (kind == kbool && (sz && sig)) goto err;
-        if (sz == kshort && (kind && kind != kint)) goto err;
+        if (kind == kbool && (sz != 0 && sig != 0)) goto err;
+        if (sz == kshort && (kind != 0 && kind != kint)) goto err;
         if (sz == klong && (kind && kind != kint && kint != kdouble))
             goto err;
-        if (sig && (kind == kvoid || kind == kfloat || kind == kdouble))
+        if (sig != 0 && (kind == kvoid || kind == kfloat || kind == kdouble))
             goto err;
-        if (usertype && (kind || sz || sig)) goto err;
+        if (usertype && (kind != 0 || sz != 0 || sig != 0)) goto err;
     }
 done:
     if (rsclass) *rsclass = sclass;
@@ -2004,8 +2016,10 @@ static void readStaticLocalVar(Type *tp, char *name) {
 }
 
 static Type* readDeclSpecOpt(int *sclass) {
-    if (isType(peek()))
+    if (isType(peek())) {
+        puts("return true");
         return readDeclSpec(sclass);
+    }
     warnt(peek(), "type specifier missing, assuming int");
     return type_int;
 }
@@ -2129,9 +2143,7 @@ static bool isFuncdef() {
     auto buf = new std::vector<Token*>;
     bool r = 0;
     while (1) {
-        puts("get begin");
         Token *tk = get();
-        std::cout << table[tk->kind] << std::endl;
         buf->push_back(tk);
         if (tk->kind == TEOF)
             error("premature end of input");
@@ -2175,6 +2187,7 @@ static void backfillLabels() {
 }
 
 static Node* readFuncdef() {
+    puts("i'm here");
     int sclass = 0;
     Type *basetype = readDeclSpecOpt(&sclass);
     localenv = makeMapParent(globalenv);
@@ -2236,7 +2249,7 @@ static Node* readOptDeclOrStmt() {
 
 #define RESTORE_JUMP_LABELS()       \
     lcontinue = ocontinue;          \
-    lbreak = obreak;
+    lbreak = obreak
 
 static Node* readForStmt() {
     expect('(');
@@ -2250,7 +2263,7 @@ static Node* readForStmt() {
     if (cond && isFlotype(cond->tp))
         cond = astConv(type_bool, cond);
     expect(';');
-    auto *step = readExprOpt();
+    auto step = readExprOpt();
     expect(')');
     SET_JUMP_LABELS(mid, end);
     auto body = readStmt();
@@ -2496,24 +2509,24 @@ static Node* readStmt() {
 static Node* readCompoundStmt() {
     auto orig = localenv;
     localenv = makeMapParent(localenv);
-    auto list = new std::vector<Node*>;
+    auto alist = new std::vector<Node*>;
     while (1) {
         if (nextToken('}')) break;
-        readDeclOrStmt(list);
+        readDeclOrStmt(alist);
     }
     localenv = orig;
-    return astCompoundstmt(list);
+    return astCompoundstmt(alist);
 }
 
-static void readDeclOrStmt(std::vector<Node*> *list) {
+static void readDeclOrStmt(std::vector<Node*> *alist) {
     auto tk = peek();
     if (tk->kind == TEOF)
         error("premature end of input");
     markLocation();
-    if (isType(tk)) readDecl(list, 0);
+    if (isType(tk)) readDecl(alist, 0);
     else {
         auto stmt = readStmt();
-        if (stmt) list->push_back(stmt);
+        if (stmt) alist->push_back(stmt);
     }
 }
 
@@ -2525,7 +2538,8 @@ std::vector<Node*>* readToplevels() {
     toplevels = new std::vector<Node*>;
     while (1) {
         if (peek()->kind == TEOF) return toplevels;
-        if (isFuncdef()) toplevels->push_back(readFuncdef());
+        if (isFuncdef())
+            toplevels->push_back(readFuncdef());
         else readDecl(toplevels, 1);
     }
 }
@@ -2546,5 +2560,10 @@ void parseInit() {
     std::vector<Type*> *two_voidptrs = new std::vector<Type*>;
     two_voidptrs->push_back(makePtrType(type_void));
     two_voidptrs->push_back(makePtrType(type_void));
+    defineBuiltin("__builtin_return_address", makePtrType(type_void),
+            voidptr);
+    defineBuiltin("__builtin_reg_class", type_int, voidptr);
+    defineBuiltin("__builtin_va_arg", type_void, two_voidptrs);
+    defineBuiltin("__builtin_va_start", type_void, voidptr);
     puts("parseInit finished");
 }

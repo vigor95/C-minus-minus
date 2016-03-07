@@ -23,6 +23,7 @@ int main(int argc, char **argv) {
     }*/
     parseInit();
     auto toplevels = readToplevels();
+    printf("%d\n", toplevels->size());
     for (unsigned i = 0; i < toplevels->size(); i++) {
         auto v = (*toplevels)[i];
         printf("%s\n", node2s(v));

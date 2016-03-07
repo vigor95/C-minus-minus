@@ -134,12 +134,120 @@ static void doNode2s(Buffer *b, Node *node) {
             break;
         case AST_FUNCALL:
         case AST_FUNCPTR_CALL: {
-            bufPrintf(b, "(%s)%s(", tp2s(node->tp)),
-                node->kind == AST_FUNCALL ? node->fname : node2s(node);
+            bufPrintf(b, "(%s)%s(", tp2s(node->tp),
+                node->kind == AST_FUNCALL ? node->fname : node2s(node));
             for (int i = 0; i < node->args->size(); i++) {
                 if (i > 0) bufPrintf(b, ",");
                 bufPrintf(b, "%s", node2s((*node->args)[i]));
             }
+            bufPrintf(b, ")");
+            break;
+        }
+        case AST_FUNCDESG: {
+            bufPrintf(b, "(funcdesg %s)", node->fname);
+            break;
+        }
+        case AST_FUNC: {
+            bufPrintf(b, "(%s)%s(", tp2s(node->tp), node->fname);
+            for (unsigned i = 0; i < node->params->size(); i++) {
+                if (i > 0) bufPrintf(b, ",");
+                auto param = (*node->params)[i];
+                bufPrintf(b, "%s %s", tp2s(param->tp), node2s(param));
+            }
+            bufPrintf(b, ")");
+            doNode2s(b, node->body);
+            break;
+        }
+        case AST_GOTO:
+            bufPrintf(b, "goto(%s)", node->label);
+            break;
+        case AST_DECL:
+            bufPrintf(b, "(decl %s %s", tp2s(node->declvar->tp),
+                    node->declvar->varname);
+            if (node->declinit) {
+                bufPrintf(b, " ");
+                a2sDeclinit(b, node->declinit);
+            }
+            bufPrintf(b, ")");
+            break;
+        case AST_INIT:
+            bufPrintf(b, "%s@%d", node2s(node->initval), node->initoff,
+                    tp2s(node->totype));
+            break;
+        case AST_CONV:
+            bufPrintf(b, "(conv %s=>%s)", node2s(node->operand),
+                    tp2s(node->tp));
+            break;
+        case AST_IF:
+            bufPrintf(b, "(if %s %s", node2s(node->cond),
+                    node2s(node->then));
+            if (node->els)
+                bufPrintf(b, " %s", node2s(node->els));
+            bufPrintf(b, ")");
+            break;
+        case AST_TERNARY:
+            bufPrintf(b, "(? %s %s %s)", node2s(node->cond),
+                    node2s(node->then), node2s(node->els));
+            break;
+        case AST_RETURN:
+            bufPrintf(b, "(return %s)", node2s(node->retval));
+            break;
+        case AST_COMPOUND_STMT: {
+            bufPrintf(b, "{");
+            for (unsigned i = 0; i < node->stmts->size(); i++) {
+                doNode2s(b, (*node->stmts)[i]);
+                bufPrintf(b, ";");
+            }
+            bufPrintf(b, "}");
+            break;
+        }
+        case AST_STRUCT_REF:
+            doNode2s(b, node->struc);
+            bufPrintf(b, ".");
+            bufPrintf(b, node->field);
+            break;
+        case AST_ADDR: uopToString(b, "addr", node); break;
+        case AST_DEREF: uopToString(b, "deref", node); break;
+        case OP_SAL: binopToString(b, "<<", node); break;
+        case OP_SAR:
+        case OP_SHR: binopToString(b, "<<", node); break;
+        case OP_GE: binopToString(b, ">=", node); break;
+        case OP_LE: binopToString(b, ">=", node); break;
+        case OP_NE: binopToString(b, "!=", node); break;
+        case OP_PRE_INC: uopToString(b, "pre++", node); break;
+        case OP_PRE_DEC: uopToString(b, "pre--", node); break;
+        case OP_POST_INC: uopToString(b, "post++", node); break;
+        case OP_POST_DEC: uopToString(b, "post--", node); break;
+        case OP_LOGAND: binopToString(b, "and", node); break;
+        case OP_LOGOR: binopToString(b, "or", node); break;
+        case OP_A_ADD: binopToString(b, "+=", node); break;
+        case OP_A_SUB: binopToString(b, "-=", node); break;
+        case OP_A_MUL: binopToString(b, "*=", node); break;
+        case OP_A_DIV: binopToString(b, "/=", node); break;
+        case OP_A_MOD: binopToString(b, "%=", node); break;
+        case OP_A_AND: binopToString(b, "&=", node); break;
+        case OP_A_OR: binopToString(b, "!=", node); break;
+        case OP_A_XOR: binopToString(b, "^=", node); break;
+        case OP_A_SAL: binopToString(b, "<<=", node); break;
+        case OP_A_SAR:
+        case OP_A_SHR: binopToString(b, ">>=", node); break;
+        case '!': uopToString(b, "!", node); break;
+        case '&': binopToString(b, "&", node); break;
+        case '|': binopToString(b, "|", node); break;
+        case OP_CAST: {
+            bufPrintf(b, "((%s)=>(%s) %s)"), tp2s(node->operand->tp),
+                tp2s(node->tp), node2s(node->operand);
+            break;
+        }
+        case OP_LABEL_ADDR:
+            bufPrintf(b, "&&%s", node->label);
+            break;
+        default: {
+            char *left = node2s(node->left);
+            char *right = node2s(node->right);
+            if (node->kind == OP_EQ) bufPrintf(b, "(== ");
+            else bufPrintf(b, "(%c ", node->kind);
+            bufPrintf(b, "%s %s)", left, right);
         }
     }
 }

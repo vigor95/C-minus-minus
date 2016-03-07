@@ -426,9 +426,7 @@ const char* tokenPos(Token *tk);
 // map.cpp
 template <class T>
 Map<T>* makeMapParent(Map<T> *p) {
-    Map<T> *r = new Map<T>;
-    r->parent = p;
-    return r;
+    return new Map<T>(p);
 } 
 
 // parse.cpp
