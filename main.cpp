@@ -2,8 +2,7 @@
 #include <string>
 #include "cic.h"
 
-static char *infile;
-static std::string outfile;
+chars filename;
 
 int main(int argc, char **argv) {
     printf("Hello world!\n");
@@ -11,21 +10,12 @@ int main(int argc, char **argv) {
         printf("Too less arguments!\n");
         exit(1);
     }
-    infile = argv[1];
-    lexInit(infile);
-    /*while (1) {
-        Token *tk = lex();
-        if (tk->kind != TNEWLINE) {
-            std::cout << tk->line << ": " << table[tk->kind] << std::endl;
-            if (tk->kind == TIDENT) puts(tk->sval);
-        }
-        if (tk->kind == TEOF) break;
-    }*/
-    parseInit();
-    auto toplevels = readToplevels();
-    printf("%d\n", toplevels->size());
-    for (unsigned i = 0; i < toplevels->size(); i++) {
-        auto v = (*toplevels)[i];
-        printf("%s\n", node2s(v));
-    }
+    filename = argv[1];
+    if (preprocess()) return 1;
+    std::cout << "preprocess ok\n";
+    if (lex()) return 2;
+    std::cout << "lex ok\n";
+    if (parse()) return 3;
+    std::cout << "parse ok\n";
+    return 0;
 }

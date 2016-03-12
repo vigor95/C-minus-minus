@@ -1,6 +1,9 @@
 #include <set>
 #include <map>
 #include <string>
+#include <sstream>
+#include <fstream>
+#include <stack>
 #include <vector>
 #include <cassert>
 #include <cstring>
@@ -12,430 +15,117 @@
 #include <algorithm>
 #include <climits>
 
-static std::string table[] = {"indent", "keyword", "number", "char","string",
-"eof", "!invalid", "min_cpp_token", "newline", "space", "macro"};
+#define null "null"
+#define MAX_GRAM_NUM 230
+#define MAX_GRAM_STMT_LEN 10
+#define MAX_ALL_SYMBOL_NUM 170
+#define MAX_ITEM_NUM 3000
 
-inline char* newChar(char *src) {
-    char *ret = NULL;
-    if (src) {
-        ret = new char[strlen(src) + 1];
-        strcpy(ret, src);
-    }
-    return ret;
-}
+typedef std::vector<std::string> svec;
+typedef std::string chars;
+typedef std::vector<int> ivec;
 
-inline char* newChar(const char *src) {
-    char *ret = NULL;
-    if (src) {
-        ret = new char[strlen(src) + 1];
-        strcpy(ret, src);
-    }
-    return ret;
-}
+struct Source {
+    std::string code;
+    std::string file;
+    int line;
+    Source() {}
+    Source(std::string c, std::string f, int l):
+        code(c), file(f), line(l) {}
+};
+extern std::vector<Source> source;
 
-struct cmp {
-    bool operator()(const char *s1, const char *s2) {
-        return strcmp(s1, s2) < 0;
-    }
+struct DefDetail {
+    std::string key, val;
+    std::vector<std::string> para;
+    DefDetail() = default;
+    DefDetail(std::string k, std::string v): key(k), val(v) {}
 };
 
-enum {
-    TIDENT,
-    TKEYWORD,
-    TNUMBER,
-    TCHAR,
-    TSTRING,
-    TEOF,
-    TINVALID,
-                                // Only in CPP
-    MIN_CPP_TOKEN,
-    TNEWLINE,
-    TSPACE,
-    TMACRO_PARAM
+extern std::string filename;
+
+struct Word {
+    chars type, val;
+    int line;
+    Word() = default;
+    Word(chars t, chars v, int l): type(t), val(v), line(l) {}
 };
 
-enum {
-    ENC_NONE,
-    ENC_CHAR16,
-    ENC_CHAR32,
-    ENC_UTF8,
-    ENC_WCHAR
-}; 
-
-struct Type;
-struct Node;
-template <class T>
-struct Map {
-    Map<T> *parent;
-    std::map<char*, T*, cmp> *body;
-    Map(): parent(NULL), body(new std::map<char*, T*, cmp>) {}
-    Map(Map<T> *p): parent(p), body(new std::map<char*, T*, cmp>) {}
-    T* get(char *key) {
-        auto it = body->find(key);
-        if (it != body->end()) return it->second;
-        if (parent) return parent->get(key);
-        return NULL;
-    }
-};
-
-template <class T>
-struct Dict {
-    Map<T> *m;
-    std::vector<void*> *key;
-};
-
-struct Buffer {
-    char *body;
-    int nalloc;
-    int len;
-};
-
-struct File {
-    FILE *file;
-    char *p;
-    char *name;
-    int line, column;
-    int ntok;
-    int last;
-    int buf[3];
-    int buflen;
-};
-
-struct Token {
-    int kind;
-    File *file;
-    int line, column;
-    bool space, bol;
-    int cnt;
-    std::set<std::string> hideset;
-    union {
-        int id;
-        struct {
-            char *sval;
-            int slen;
-            int c;
-            int enc;
-        };
-        struct {
-            bool is_vararg;
-            int pos;
-        };
-    };
-    Token() {}
-    Token(int k): kind(k) {}
-    Token(int k, char *p): kind(k), sval(p) {
-        //sval = new char[strlen(p) + 1];
-        //strcpy(sval, p);
-    }
-    Token(int k, char *s, int len, int _enc):
-        kind(k), sval(s), slen(len), enc(_enc) {
-            //sval = new char[strlen(s) + 1];
-            //strcpy(sval, s);
-        }
-    Token(int k, int i): kind(k), id(i) {}
-    Token(int k, char _c): kind(k), c(_c) {}
-    Token(int k, int _c, int _enc): kind(k), c(_c), enc(_enc) {}
-};
-
-struct Node;
-
-enum {
-    AST_LITERAL = 256,
-    AST_LVAR,
-    AST_GVAR,
-    AST_TYPEDEF,
-    AST_FUNCALL,
-    AST_FUNCPTR_CALL,
-    AST_FUNCDESG,
-    AST_FUNC,
-    AST_DECL,
-    AST_INIT,
-    AST_CONV,
-    AST_ADDR,
-    AST_DEREF,
-    AST_IF,
-    AST_TERNARY,
-    AST_DEFAULT,
-    AST_RETURN,
-    AST_COMPOUND_STMT,
-    AST_STRUCT_REF,
-    AST_GOTO,
-    AST_COMPUTED_GOTO,
-    AST_LABEL,
-    OP_SIZEOF,
-    OP_CAST,
-    OP_SHR,
-    OP_SHL,
-    OP_A_SHR,
-    OP_A_SHL,
-    OP_PRE_INC,
-    OP_PRE_DEC,
-    OP_POST_INC,
-    OP_POST_DEC,
-    OP_LABEL_ADDR,
-#define op(name, _) name,
-#define keyword(name, x, y) name,
-#include "keyword.inc"
-#undef keyword
-#undef op
-};
-
-enum {
-    KIND_VOID,
-    KIND_BOOL,
-    KIND_CHAR,
-    KIND_SHORT,
-    KIND_INT,
-    KIND_LONG,
-    KIND_LLONG,
-    KIND_FLOAT,
-    KIND_DOUBLE,
-    KIND_LDOUBLE,
-    KIND_ARRAY,
-    KIND_ENUM,
-    KIND_PTR,
-    KIND_STRUCT,
-    KIND_FUNC,
-    KIND_STUB
-};
+extern std::vector<Word> word;
 
 struct Type {
-    int kind;
-    int size;
-    int align;
-    bool usig;
-    bool isstatic;
-    Type *ptr;
-    int len;
-    Dict<Type> *fields;
-    int offset;
-    bool isstruct;
-    int bitoff;
-    int bitsize;
-    Type *rettype;
-    std::vector<Type*> *params;
-    bool hasva;
-    bool oldstyle;
-    Type() {}
-    Type(int k): kind(k) {}
-    Type(int k, int s, int a, bool u):
-        kind(k), size(s), align(a), usig(u) {}
-    Type(int k, Type *t, int s, int a): kind(k), size(s), 
-        align(a), ptr(new Type(*t)) {}
-    Type(int k, Type *t, int s, int l, int a): kind(k),
-        size(s), align(a), ptr(new Type(*t)), len(l) {}
-    Type(int k, Type* rt, std::vector<Type*> *ps, bool hv, bool os):
-        kind(k), rettype(rt), params(ps), hasva(hv), oldstyle(os) {}
+    chars  name, type;
+    int array;
+    int pointer;
+    std::vector<int> index;
+    Type() = default;
+    Type(chars n, chars t, int a, int p, int i):
+        name(n), type(t), array(a), pointer(p), index(i) {}
 };
 
-struct SourceLoc {
-    char *file;
+struct ParseTree {
+    int stmt;
+    Type type;
+    chars val;
+    std::vector<ParseTree*> tree;
     int line;
 };
+extern ParseTree *root;
 
-struct Node {
-    int kind;
-    Type *tp;
-    SourceLoc *sl;
-    union {
-        long ival;
-        struct {
-            double fval;
-            char *flabel;
-        };
-        struct {
-            char *sval;
-            char *slabel;
-        };
-        struct {
-            char *varname;
-            int loff;
-            char *glabel;
-        };
-        struct {
-            Node *left;
-            Node *right;
-        };
-        struct {
-            Node *operand;
-        };
-        struct {
-            char *fname;
-            std::vector<Node*> *args;
-            Type *ftype;
-            Node *fptr;
-            std::vector<Node*> *params;
-            std::vector<Node*> *localvars;
-            Node *body;
-        };
-        struct {
-            Node *declvar;
-            std::vector<Node*> *declinit;
-        };
-        struct {
-            Node *initval;
-            int initoff;
-            std::vector<Node*> *lvarinit;
-            Type *totype;
-        };
-        struct {
-            Node *cond, *then, *els;
-        };
-        struct {
-            char *label, *newlabel;
-        };
-        Node *retval;
-        std::vector<Node*> *stmts;
-        struct {
-            Node *struc;
-            char *field;
-            Type *fieldtype;
-        };
-    };
-    Node() = default;
-    Node(int k): kind(k) {}
-    Node(int k, Type *t): kind(k), tp(t) {}
-    /*Node() = default;
-    Node(int k, Type *t, Node *o): kind(k), tp(t ? new Type(*t) : NULL),
-        operand(o ? new Node(*o) : NULL) {}
-    Node(int k, Type *t): kind(k), tp(t ? new Type(*t) : NULL) {}
-    Node(int k, Type *t, long iv): kind(k), tp(t ? new Type(*t) : NULL),
-        ival(iv) {}
-    Node(int k, Type *t, double fv): kind(k), tp(t ? new Type(*t) : NULL),
-        fval(fv) {}
-    Node(int k, Type *t, char *vn, char *gn): kind(k),
-        tp(t ? new Type(*t) : NULL), varname(newChar(vn)), glabel(newChar(          gn)) {}
-    Node(int k, Type *t, char *sv, int flag): kind(k), 
-        tp(t ? new Type(*t) : NULL) {
-        if (flag == 1) {
-            varname = newChar(sv);
-        }
-        else if (flag == 2) {
-            sval = newChar(sv);
-        }
-        else if (flag == 3) {
-            fname = newChar(sv);
-        }
-    }
-    Node(int k, Type *t, char *fn, Type *ft): kind(k),
-        tp(t ? new Type(*t) : NULL), fname(newChar(fn)),
-        ftype(ft ? new Type(*ft) : NULL) {}
-    Node(int k, Type *t, Node *fp, std::vector<void*> as): kind(k), tp(t ? new Type(*t) : NULL),
-        fptr(fp ? new Node(*fp) : NULL) {}
-    Node(int k, Type *t, char *fn, std::vector<void*> ps, std::vector<void*> ls, Node *b): kind(k), tp(t ? new Type(*t) : NULL), fname(newChar(fn)),
-        localvars(ls), body(b ? new Node(*b) : NULL) {}
-    Node(int k, Node *v, std::vector<void*> di) {}
-    */
+struct IR {
+    chars label, op, arg1, arg2, res;
+    int out_struct_func;
+    svec para;
+    IR() = default;
+    IR(chars o, chars a1, chars a2, chars r):
+        op(o), arg1(a1), arg2(a2), res(r) {}
 };
+extern std::vector<IR> irs;
 
-extern Type *type_void;
-extern Type *type_bool;
-extern Type *type_char;
-extern Type *type_short;
-extern Type *type_int;
-extern Type *type_long;
-extern Type *type_uchar;
-extern Type *type_ushort;
-extern Type *type_uint;
-extern Type *type_ulong;
-extern Type *type_ullong;
-extern Type *type_float;
-extern Type *type_double;
-extern Type *type_ldouble;
+struct Func {
+    Type type;
+    chars name;
+    svec flist;
+    chars beg, mid, end;
+    Func() = default;
+    Func(Type t, chars n, svec l): type(t), name(n), flist(l) {}
+    Func(Type t, chars n, svec l, chars b, chars m, chars e):
+        type(t), name(n), flist(l), beg(b), mid(m), end(e) {}
+};
+extern std::vector<Func> funcs;
 
-// buffer.cpp
-Buffer* makeBuffer();
-char* bufBody(Buffer *b);
-int bufLen(Buffer *b);
-void bufWrite(Buffer *b, char c);
-void bufAppend(Buffer *b, char *s, int len);
-void bufPrintf(Buffer *b, const char *fmt, ...);
-char *vformat(const char *fmt, va_list ap);
-char *format(const char *fmt, ...);
-char *quoteCstring(char *p);
-char *quoteCstringLen(char *p, int len);
-const char *quoteChar(char c);
-
-// debug.cpp
-const char* tp2s(Type *tp);
-char* node2s(Node *node);
-char* tk2s(Token *tk);
-
-// dict.cpp
-template <class T>
-Dict<T>* makeDict() {
-    auto r = new Dict<T>;
-    r->m = new Map<T>;
-    r->m->body = new std::map<char*, T*, cmp>;
-    r->key = new std::vector<void*>;
-    return r;
-}
-template <class T>
-T* dictGet(Dict<T> *dict, char *key) {
-    return dict->m->body->find(key)->second;
-}
-template <class T>
-void dictPut(Dict<T> *dict, char *key, T *val) {
-    if (dict->m->body->find(key) != dict->m->body->end())
-        dict->m->body->erase(key);
-    dict->m->body->insert(std::pair<char*, T*>(key, (T*)val));
-}
-template <class T>
-std::vector<void*>* dictKeys(Dict<T> *dict) {
-    return dict->key;
+inline chars iTs(int i) {
+    std::stringstream ss;
+    ss << i;
+    return ss.str();
 }
 
-//file.cpp
-File *makeFile(FILE *file, char *name);
-File *makeFileString(char *s);
-int readc(void);
-void unreadc(int c);
-File *currentFile(void);
-void streamPush(File *file);
-int streamDepth(void);
-char *inputPosition(void);
-void streamStash(File *f);
-void streamUnstash(void);
+inline int sTi(chars s) {
+    std::istringstream iss(s);
+    int num;
+    iss >> num;
+    return num;
+}
 
-//lex.cpp
-void lexInit(char *filename);
-bool isKeyword(Token *tk, int c);
-void tokenBufferStash(std::vector<Token*> *buf);
-void tokenBufferUnstash();
-void ungetToken(Token *tk);
-Token* lexString(char *s);
-Token* lex();
+inline double sTd(chars s) {
+    std::istringstream iss(s);
+    double num;
+    iss >> num;
+    return num;
+}
 
-//error.cpp
-extern bool enable_warning;
-extern bool dumpstack;
-extern bool dumpsource;
-extern bool w_e;
+inline bool _alpha(char ch) {
+    return isalpha(ch) || ch == '_';
+}
 
-#define STR2(x) #x
-#define STR(x) STR2(x)
-#define error(...)       errorf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
-#define errort(tok, ...) errorf(__FILE__ ":" STR(__LINE__), tokenPos(tok), __VA_ARGS__)
-#define warn(...)        warnf(__FILE__ ":" STR(__LINE__), NULL, __VA_ARGS__)
-#define warnt(tok, ...)  warnf(__FILE__ ":" STR(__LINE__), tokenPos(tok), __VA_ARGS__)
+inline int digitVal(int ch) {
+    if (isdigit(ch)) return ch - '0';
+    if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
+    if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
+    return 0;
+}
 
-[[noreturn]] void errorf(const char *line, const char *pos, const char *fmt, ...);
-void warnf(const char *line, const char *pos, const char *fmt, ...);
-const char* tokenPos(Token *tk);
-
-// map.cpp
-template <class T>
-Map<T>* makeMapParent(Map<T> *p) {
-    return new Map<T>(p);
-} 
-
-// parse.cpp
-char* makeTempname();
-char* makeLabel();
-bool isInttype(Type*);
-bool isFlotype(Type*);
-int makeIntexpr(Node*, Node**);
-Node* readExpr();
-void parseInit();
-char* fullpath(char *path);
-std::vector<Node*>* readToplevels();
+extern int preprocess();
+extern int lex();
+extern int parse();
+extern int semantic();

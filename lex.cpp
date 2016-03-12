@@ -1,390 +1,259 @@
 #include "cic.h"
 
-#define errorp(p, ...) errorf(__FILE__ ":" STR(__LINE__), posString(&p), __VA_ARGS__)
-#define warnp(p, ...) warnf(__FILE__ ":" STR(__LINE__), posString(&p), __VA_ARGS__)
+std::vector<Word> word;
 
-struct Pos {
-    int line, column;
-};
+static svec terms, split;
+static std::map<chars, int> check;
+static chars lex_out;
+static std::vector<Word> out;
 
-static Pos pos;
-static std::vector<std::vector<Token*>* > *buffers = new std::vector<std::vector<Token*> *>;
-
-void lexInit(char *filename) {
-    buffers->push_back(new std::vector<Token*>);
-    FILE *fp = fopen(filename, "r");
-    if (!fp) error("Cannot open %s: %s", filename, strerror(errno));
-    printf("Open %s successfully!\n", filename);
-    streamPush(makeFile(fp, filename));
-    printf("streamPush ok\n");
-}
-
-static const char* posString(Pos *p) {
-    File *f = currentFile();
-    return format("%s:%d:%d", f ? f->name : "(unknown)", p->line, p->column);
-}
-
-static Pos getPos(int delta) {
-    File *f = currentFile();
-    return (Pos){f->line, f->column + delta};
-}
-
-static void mark() {
-    pos = getPos(0);
-}
-
-static Token* makeToken(Token *tmpl) {
-    Token *r = new Token;
-    *r = *tmpl;
-    File *f = currentFile();
-    r->file = f;
-    r->line = pos.line;
-    r->column = pos.column;
-    r->cnt = f->ntok++;
-    return r;
-}
-
-static Token* makeIdent(char *p) {
-    return makeToken(new Token(TIDENT, p));
-}
-
-static Token* makeStrtok(char *s, int len, int enc) {
-    return makeToken(new Token(TSTRING, s, len, enc));
-}
-
-static Token* makeKeyword(int id) {
-    return makeToken(new Token(TKEYWORD, id));
-}
-
-static Token* makeNumber(char *s) {
-    return makeToken(new Token(TNUMBER, s));
-}
-
-static Token* makeInvalid(char c) {
-    return makeToken(new Token(TINVALID, c));
-}
-
-static Token* makeChar(int c, int enc) {
-    return makeToken(new Token(TCHAR, c, enc));
-}
-
-static bool isWhitespace(char c) {
-    return c == ' ' || c == '\t' || c == '\f' || c == '\v';
-}
-
-static int peek() {
-    int r = readc();
-    unreadc(r);
-    return r;
-}
-
-static bool next(int expect) {
-    int c = readc();
-    if (c == expect) return 1;
-    unreadc(c);
-    return 0;
-}
-
-static void skipLine() {
-    while (1) {
-        int c = readc();
-        if (c == EOF) return;
-        if (c == '\n') {
-            unreadc(c);
-            return;
-        }
-    }
-}
-
-static void skipBlockComment() {
-    Pos p = getPos(-2);
-    bool maybe_end = 0;
-    while (1) {
-        int c = readc();
-        if (c == EOF) errorp(p, "Premature end of block comment");
-        if (c == '/' && maybe_end) return;
-        maybe_end = (c == '*');
-    }
-}
-
-static bool doSkipSpace() {
-    int c = readc();
-    if (c == EOF) return 0;
-    if (isWhitespace(c)) return 1;
-    if (c == '/') {
-        if (next('*')) {
-            skipBlockComment();
-            return 1;
-        }
-        if (next('/')) {
-            skipLine();
-            return 1;
-        }
-    }
-    unreadc(c);
-    return 0;
-}
-
-static bool skipSpace() {
-    if (!doSkipSpace()) return 0;
-    while (doSkipSpace());
-    return 1;
-}
-
-static void skipChar() {
-    if (readc() == '\\') readc();
-    int c = readc();
-    while (c != EOF && c != '\'') c = readc();
-}
-
-static void skipString() {
-    for (int c = readc(); c != EOF && c != '"'; c = readc())
-        if (c == '\\')
-            readc();
-}
-
-static Token* readNumber(char c) {
-    Buffer *b = makeBuffer();
-    bufWrite(b, c);
-    char last = c;
-    while (1) {
-        int c = readc();
-        bool flonum = strchr("eEpP", last) && strchr("+-", c);
-        if (!isdigit(c) && !isalpha(c) && c != '.' && !flonum) {
-            unreadc(c);
-            bufWrite(b, '\0');
-            return makeNumber(bufBody(b));
-        }
-        bufWrite(b, c);
-        last = c;
-    }
-}
-
-static bool nextOct() {
-    int c = peek();
-    return '0' <= c && c <= '7';
-}
-
-static int readOctalChar(int c) {
-    int r = c - '0';
-    if (!nextOct()) return r;
-    r = (r << 3) | (readc() - '0');
-    if (!nextOct()) return r;
-    return (r << 3) | (readc() - '0');
-}
-
-static int readHexChar() {
-    Pos p = getPos(-2);
-    int c = readc();
-    if (!isxdigit(c))
-        errorp(p, 
-            "\\x is not followed by a hexadecimal character: %c", c);
-    int r = 0;
-    for (;; c = readc()) {
-        switch (c) {
-            case '0' ... '9': r = (r << 4) | (c - '0'); continue;
-            case 'a' ... 'f': r = (r << 4) | (c - 'a' + 10); continue;
-            case 'A' ... 'F': r = (r << 4) | (c - 'A' + 10); continue;
-            default: unreadc(c); return r;
-        }
-    }
-}
-
-static bool isValidUcn(unsigned c) {
-    if (0xd800 <= c && c <= 0xdfff) return 0;
-    return 0xa0 <= c || c == '$' || c == '@' || c == '`';
-}
-
-static int readUniversalChar(int len) {
-    Pos p = getPos(-2);
-    unsigned r = 0;
-    for (int i = 0; i < len; i++) {
-        char c = readc();
-        switch (c) {
-            case '0' ... '9': r = (r << 4) | (c - '0'); continue;
-            case 'a' ... 'f': r = (r << 4) | (c - 'a' + 10); continue;
-            case 'A' ... 'F': r = (r << 4) | (c - 'A' + 10); continue;
-            default: errorp(p, "invalid universal character: %c", c);
-        }            
-    }
-    if (!isValidUcn(r))
-        errorp(p, 
-        "invalid universal character: \\%c%0*x", (len == 4) ? 'u' : 'U', len, r);
-    return r;
-}
-
-static int readEscapedChar() {
-    Pos p = getPos(-1);
-    int c = readc();
-    switch (c) {
-        case '\'': case '"': case '?': case '\\':
-            return c;
-        case 'a': return '\a';
-        case 'b': return '\b';
-        case 'f': return '\f';
-        case 'n': return '\n';
-        case 'r': return '\r';
-        case 't': return '\t';
-        case 'v': return '\v';
-        case 'e': return '\033';
-        case 'x': return readHexChar();
-        case 'u': return readUniversalChar(4);
-        case 'U': return readUniversalChar(8);
-        case '0' ... '7': return readOctalChar(c);
-    }
-    warnp(p, "unknown escaped character: \\%c", c);
-    return c;
-}
-
-static Token* readChar(int enc) {
-    int c = readc();
-    int r = (c == '\\') ? readEscapedChar() : c;
-    c = readc();
-    if (c != '\'') errorp(pos, "unterminated char");
-    if (enc == ENC_NONE) return makeChar((char)r, enc);
-    return makeChar(r, enc);
-}
-
-static Token* readString(int enc) {
-    Buffer *b = makeBuffer();
-    while (1) {
-        int c = readc();
-        if (c == EOF) errorp(pos, "unterminated string");
-        if (c == '"') break;
-        if (c != '\\') {
-            bufWrite(b, c);
-            continue;
-        }
-        bufWrite(b, c);
-    }
-    bufWrite(b, '\0');
-    return makeStrtok(bufBody(b), bufLen(b), enc);
-}
-
-static Token* readIdent(char c) {
-    Buffer *b = makeBuffer();
-    bufWrite(b, c);
-    while (1) {
-        c = readc();
-        if (isalnum(c) || (c & 0x80) || c == '_' || c == '$') {
-            bufWrite(b, c);
-            continue;
-        }
-        unreadc(c);
-        bufWrite(b, '\0');
-        return makeIdent(bufBody(b));
-    }
-}
-
-static Token* readRep(char expect, int t1, int els) {
-    return makeKeyword(next(expect) ? t1 : els);
-}
-
-static Token* readRep2(char expect1, int t1, char expect2, int t2, char els) {
-    if (next(expect1)) return makeKeyword(t1);
-    return makeKeyword(next(expect2) ? t2 : els);
-}
-
-static Token* doReadToken() {
-    if (skipSpace()) return new Token(TSPACE);
-    mark();
-    int c = readc();
-    switch (c) {
-        case '\n':return new Token(TNEWLINE);
-        case ':': return makeKeyword(next('>') ? ']' : ':');
-        case '+': return readRep2('+', OP_INC, '=', OP_A_ADD, '+');
-        case '*': return readRep('=', OP_A_MUL, '*');
-        case '=': return readRep('=', OP_EQ, '=');
-        case '!': return readRep('=', OP_NE, '!');
-        case '&': return readRep2('&', OP_LOGAND, '=', OP_A_AND, '&');
-        case '|': return readRep2('|', OP_LOGOR, '=', OP_A_OR, '|');
-        case '^': return readRep('=', OP_A_XOR, '^');
-        case '"': return readString(ENC_NONE);
-        case '\'': return readChar(ENC_NONE);
-        case '/': return makeKeyword(next('=') ? OP_A_DIV : '/');
-        case 'a' ... 't': case 'v' ... 'z': case 'A' ... 'K':
-        case 'M' ... 'T': case 'V' ... 'Z': case '_': case '$':
-        case 0x80 ... 0xfd: return readIdent(c);
-        case '0' ... '9': return readNumber(c);
-        case '.':
-            if (isdigit(peek())) return readNumber(c);
-            if (next('.')) {
-                if (next('.'))
-                    return makeKeyword(KELLIPSIS);
-                return makeIdent("..");
+static void readTerm() {
+#include "./gram.init"
+    std::istringstream is;
+    chars tmp, s;
+    for (int i = 0;; i++) {
+        s = gram_init[i];
+        if (s.length() == 0) break;
+        is.clear();
+        is.str(s);
+        while (is >> tmp) {
+            if (!(tmp.length()>2 && tmp[0] == '<' && tmp.back() == '>')
+                    && tmp != "::=" && tmp != "null") {
+                if (check.find(tmp) == check.end()) {
+                    terms.push_back(tmp);
+                    check[tmp] = 1;
+                }
             }
-            makeKeyword('.');
-        case '(': case ')': case ',': case ';': case '[':
-        case ']': case '{': case '}': case '?': case '~':
-            return makeKeyword(c);
-        case '-':
-            if (next('-')) return makeKeyword(OP_DEC);
-            if (next('>')) return makeKeyword(OP_ARROW);
-            if (next('=')) return makeKeyword(OP_A_SUB);
-            return makeKeyword('-');
-        case '<':
-            if (next('<')) return readRep('=', OP_A_SAL, OP_SAL);
-            if (next('=')) return makeKeyword(OP_LE);
-            return makeKeyword('<');
-        case '>':
-            if (next('=')) return makeKeyword(OP_GE);
-            if (next('>')) return readRep('=', OP_A_SAR, OP_SAR);
-            return makeKeyword('>');
-        case '%': return readRep('=', OP_A_MOD, '%');
-        case EOF: return new Token(TEOF);
-        default: return makeInvalid(c);
+        }
     }
 }
 
-static bool bufferEmpty() {
-    return buffers->size() == 1 && buffers->front()->size() == 0;
-}
-
-bool isKeyword(Token *tk, int c) {
-    return tk->kind == TKEYWORD && tk->id == c;
-}
-
-void tokenBufferStash(std::vector<Token*> *buf) {
-    buffers->push_back(buf);
-}
-
-void tokenBufferUnstash() {
-    buffers->pop_back();
-}
-
-void ungetToken(Token *tk) {
-    if (tk->kind == TEOF) return;
-    std::vector<Token*> *buf = (*buffers)[buffers->size() - 1];
-    buf->push_back(tk);
-}
-
-Token* lexString(char *s) {
-    streamStash(makeFileString(s));
-    Token *r = doReadToken();
-    next('\n');
-    Pos p = getPos(0);
-    if (peek() != EOF) errorp(p, "unconsumed input: %s", s);
-    streamUnstash();
-    return r;
-}
-
-Token* lex() {
-    //if (buffers == NULL) buffers = new std::vector<std::vector<Token*> >;
-    //auto buf = buffers->back();
-    std::vector<Token*> *buf = 
-        (*buffers)[buffers->size() - 1];
-    if (buf->size() > 0) {
-        buf->pop_back();
-        //return buf->back();
-        return (*buf)[buf->size()];
+static int error() {
+    int j, ok = 0;
+    for (j = 0; j < word.size(); j++)
+        if (word[j].type == "<error>")
+            ok = 1;
+    if (ok) {
+        for (j = 0; j < word.size(); j++)
+            if (word[j].type == "<error>")
+                std::cout << "lexical error: "
+                    << source[word[j].line].file.c_str()
+                    << " " << source[word[j].line].line
+                    << " " << word[j].val.c_str() << "\n";
     }
-    if(buffers->size() > 1) return new Token(TEOF);
-    bool bol = (currentFile()->column == 1);
-    Token *tk = doReadToken();
-    while (tk->kind == TSPACE) {
-        tk = doReadToken();
-        tk->space = 1;
+    return ok;
+}
+
+static chars sTs(chars s) {
+    if (s == "\\a")     return iTs(7);
+    if (s == "\\b")     return iTs(8);
+    if (s == "\\f")     return iTs(12);
+    if (s == "\\n")     return iTs(10);
+    if (s == "\\r")     return iTs(13);
+    if (s == "\\t")     return iTs(9);
+    if (s == "\\v")     return iTs(11);
+    if (s == "\\\\")    return iTs(92);
+    if (s == "\\?")     return iTs(63);
+    if (s == "\'")      return iTs(39);
+    if (s == "\"")      return iTs(34);
+    if (s == "\0")      return iTs(0);
+    if (s[1] == 'x' || s[1] == 'X')
+        return iTs(digitVal(s[2]) * 16 + digitVal(s[3]));
+    return iTs(digitVal(s[1]) * 64 + digitVal(s[2]) * 8 + digitVal(s[3]));
+}
+
+static chars number(chars st, int pos, int state) {
+    int i;
+    st += "$";
+    for (i = pos + 1; i < st.length(); i++) {
+        switch (state) {
+            case 1:
+                if (isdigit(st[i]))              { state = 1; break; }
+                if (st[i] == '.')                { state = 2; break; }
+                if (st[i] == 'e' || st[i] == 'E'){ state = 3; break; }
+                return st.substr(pos, i - pos);
+            case 2:
+                if (isdigit(st[i]))              { state = 2; break; }
+                if (st[i] == 'E' || st[i] == 'E'){ state = 3; break; }
+            case 3:
+                if (st[i] == '+' || st[i] == '-'){ state = 5; break; }
+                if (isdigit(st[i]))              { state = 4; break; }
+                return "<error>";
+            case 4:
+                if (isdigit(st[i]))              { state = 4; break; }
+                return st.substr(pos, i - pos);
+            case 5:
+                if (isdigit(st[i]))              { state = 4; break; }
+                return "<error>";
+            case 6:
+                if (isdigit(st[i]))              { state = 2; break; }
+                return "<error>";
+        }
     }
-    tk->bol = bol;
-    return tk;
+    return st.substr(pos, i - pos);
+}
+
+static chars ident(chars st, int pos) {
+    int i;
+    st += "$";
+    for (i = pos + 1; i < st.length(); i++) {
+        if (_alpha(st[i])) continue;
+        if (isdigit(st[i])) continue;
+        return st.substr(pos, i - pos);
+    }
+    return st.substr(pos, i - pos);
+}
+
+static std::vector<Word> wordSplit(chars s, int line) {
+    chars ss;
+    std::vector<Word> tmp;
+    int len = s.length();
+    int i, j, k;
+    for (i = 0; i < len; i++) {
+        if (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || 
+                s[i] == '\0' || s[i] == '\r')
+            continue;
+        else if (s[i] == '\'') {
+            if (i + 2 < len && s[i+2] == '\'') {
+                j = i + 2;
+                ss = s.substr(i, j-i+1);
+                tmp.push_back(Word("<number>", iTs(s[i+1]), line));
+                i = j;
+            }
+            else if (i + 3 < len && s[i+1] == '\\' && s[i+3] == '\'') {
+                j = i + 3;
+                ss = s.substr(i+1, j-i-1);
+                tmp.push_back(Word("<number>", sTs(ss), line));
+                i = j;
+            }
+            else if (i + 5 < len && s[i+1] == '\\' && s[i+5] == '\'') {
+                j = i + 5;
+                ss = s.substr(i+1, j-i-1);
+                tmp.push_back(Word("<number>", sTs(ss), line));
+            }
+            else {
+                tmp.push_back(Word("error", s.substr(i), line));
+                return tmp;
+            }
+        }
+        else if (s[i] == '"') {
+            for (j = i + 1; j < len; j++) if (s[i] == '"') break;
+            if (j >= len) {
+                tmp.push_back(Word("error", s.substr(i), line));
+                return tmp;
+            }
+            ss = s.substr(i, j-i+1);
+            for (k = 0; k < ss.length(); k++) if (ss[k] == ' ') ss[k] = 8;
+            tmp.push_back(Word("<string>", ss, line));
+            i = j;
+        }
+        else if (isdigit(s[i])) {
+            ss = number(s, i, 1);
+            if (ss == "<error>") {
+                tmp.push_back(Word("error", s.substr(i), line));
+                return tmp;
+            }
+            tmp.push_back(Word("<number>", ss, line));
+            i += ss.length() - 1;
+        }
+        else if (s[i] == '.' && i+1 < len && isdigit(s[i+1])) {
+            ss = number(s, i, 6);
+            if (ss == "<error>")
+                tmp.push_back(Word("error", s.substr(i), line));
+            else {
+                tmp.push_back(Word("<number>", ss, line));
+                i += ss.length() - 1;
+            }
+        }
+        else if (_alpha(s[i])) {
+            ss = ident(s, i);
+            if (ss == "<error>") {
+                tmp.push_back(Word("<error>", s.substr(i), line));
+                return tmp;
+            }
+            if (check.find(ss) != check.end())
+                tmp.push_back(Word("<keyword>", ss, line));
+            else
+                tmp.push_back(Word("<ident>", ss, line));
+            i += ss.length() - 1;
+        }
+        else {
+            for (j = 0; j < split.size(); j++)
+                if (len-i >= split[j].length() &&
+                        s.substr(i, split[j].length()) == split[j])
+                    break;
+            if (j < split.size()) {
+                tmp.push_back(Word("<keyword>", split[j], line));
+                i += split[j].length() - 1;
+            }
+            else {
+                tmp.push_back(Word("<error>", s.substr(i), line));
+                return tmp;
+            }
+        }
+    }
+    return tmp;
+}
+
+static std::vector<Word> solve(chars s, int l) {
+    std::vector<Word> ret;
+    ret = wordSplit(s, l);
+    return ret;
+}
+
+int lex() {
+    lex_out = "lex.out";
+    int i, j, k, n;
+    chars ss, replace, place;
+    std::vector<Word> out_tmp;
+    readTerm();
+    for (i = 0; i < terms.size(); i++) {
+        ss = terms[i];
+        if (_alpha(ss[0]) == 0) split.push_back(ss);
+    }
+    for (i = 0; i < split.size(); i++) {
+        for (j = i + 1; j < split.size(); j++)
+            if (split[i].length() < split[j].length()) {
+                ss = split[i];
+                split[i] = split[j];
+                split[j] = ss;
+            }
+    }
+
+    FILE *fp = fopen(lex_out.c_str(), "w");
+    word.clear();
+    for (i = 0; i < source.size(); i++) {
+        out = solve(source[i].code, i); 
+        k = 0;
+        for (j = 0; j < out.size(); j++) {
+            if (out[j].val == "EOF") {
+                out[j].val = "-1";
+                out[j].type = "<number>";
+            }
+            if (out[j].val == "NULL") {
+                out[j].val = "0";
+                out[j].type = "<number>";
+            }
+            if (out[j].val == "true") {
+                out[j].val = "1";
+                out[j].type = "<number>";                            
+            }
+            if (out[j].val == "false") {
+                out[j].val = "0";
+                out[j].type = "<number>";                            
+            }
+            if (out[j].val == "short")      out[j].val = "char";
+            if (out[j].val == "long")       out[j].val = "int";
+            if (out[j].val == "float")      out[j].val = "double";
+            if (out[j].val == "signed")     out[j].val = "int";
+            if (out[j].val == "unsigned")   out[j].val = "int";
+            fprintf(fp, "%d: (%s, %s)\n", out[j].line + 1,
+                    out[j].type.c_str(), out[j].val.c_str());
+            k = 1;
+            word.push_back(out[j]);
+        }
+        if (k == 1) fprintf(fp, "\n\n");
+    }
+    fclose(fp);
+    return error();
 }
