@@ -1,7 +1,0 @@
-PROJECT(cic)
-SET(SRC_LIST main.cpp preprocess.cpp lex.cpp parse.cpp semantic.cpp)
-SET(CMAKE_CXX_COMPILER "g++")
-SET(CMAKE_CXX_FLAGS "-std=c++11 -O3")
-SET(CMAKE_BUILD_TYPE Release)
-ADD_EXECUTABLE(cic ${SRC_LIST})
-INSTALL(PROGRAMS cic DESTINATION /usr/bin/)
