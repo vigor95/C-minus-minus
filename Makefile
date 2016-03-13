@@ -157,51 +157,6 @@ cic/fast:
 .PHONY : cic/fast
 
 # target to build an object file
-buffer.o:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/buffer.o
-.PHONY : buffer.o
-
-# target to preprocess a source file
-buffer.i:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/buffer.i
-.PHONY : buffer.i
-
-# target to generate assembly for a file
-buffer.s:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/buffer.s
-.PHONY : buffer.s
-
-# target to build an object file
-error.o:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/error.o
-.PHONY : error.o
-
-# target to preprocess a source file
-error.i:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/error.i
-.PHONY : error.i
-
-# target to generate assembly for a file
-error.s:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/error.s
-.PHONY : error.s
-
-# target to build an object file
-file.o:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/file.o
-.PHONY : file.o
-
-# target to preprocess a source file
-file.i:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/file.i
-.PHONY : file.i
-
-# target to generate assembly for a file
-file.s:
-	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/file.s
-.PHONY : file.s
-
-# target to build an object file
 lex.o:
 	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/lex.o
 .PHONY : lex.o
@@ -231,6 +186,51 @@ main.s:
 	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/main.s
 .PHONY : main.s
 
+# target to build an object file
+parse.o:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/parse.o
+.PHONY : parse.o
+
+# target to preprocess a source file
+parse.i:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/parse.i
+.PHONY : parse.i
+
+# target to generate assembly for a file
+parse.s:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/parse.s
+.PHONY : parse.s
+
+# target to build an object file
+preprocess.o:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/preprocess.o
+.PHONY : preprocess.o
+
+# target to preprocess a source file
+preprocess.i:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/preprocess.i
+.PHONY : preprocess.i
+
+# target to generate assembly for a file
+preprocess.s:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/preprocess.s
+.PHONY : preprocess.s
+
+# target to build an object file
+semantic.o:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/semantic.o
+.PHONY : semantic.o
+
+# target to preprocess a source file
+semantic.i:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/semantic.i
+.PHONY : semantic.i
+
+# target to generate assembly for a file
+semantic.s:
+	$(MAKE) -f CMakeFiles/cic.dir/build.make CMakeFiles/cic.dir/semantic.s
+.PHONY : semantic.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -244,21 +244,21 @@ help:
 	@echo "... install/strip"
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
-	@echo "... buffer.o"
-	@echo "... buffer.i"
-	@echo "... buffer.s"
-	@echo "... error.o"
-	@echo "... error.i"
-	@echo "... error.s"
-	@echo "... file.o"
-	@echo "... file.i"
-	@echo "... file.s"
 	@echo "... lex.o"
 	@echo "... lex.i"
 	@echo "... lex.s"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"
+	@echo "... parse.o"
+	@echo "... parse.i"
+	@echo "... parse.s"
+	@echo "... preprocess.o"
+	@echo "... preprocess.i"
+	@echo "... preprocess.s"
+	@echo "... semantic.o"
+	@echo "... semantic.i"
+	@echo "... semantic.s"
 .PHONY : help
 
 
