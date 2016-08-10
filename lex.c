@@ -621,3 +621,31 @@ static int ScanDot() {
         return TK_DOT;
     }
 }
+
+#define SINGLE_CHAR_SCANNER(t)  \
+static int Scan##t() {          \
+    CURSOR++;                   \
+    return TK_##t;              \
+}
+
+SINGLE_CHAR_SCANNER(LBRACE)
+SINGLE_CHAR_SCANNER(RBRACE)
+SINGLE_CHAR_SCANNER(LBRACKET)
+SINGLE_CHAR_SCANNER(RBRACKET)
+SINGLE_CHAR_SCANNER(LPAREN)
+SINGLE_CHAR_SCANNER(RPAREN)
+SINGLE_CHAR_SCANNER(COMMA)
+SINGLE_CHAR_SCANNER(SEMICOLON)
+SINGLE_CHAR_SCANNER(COMP)
+SINGLE_CHAR_SCANNER(QUESTION)
+SINGLE_CHAR_SCANNER(COLON)
+
+static int ScanBadChar() {
+    Error(&token_coord, "illegal character:\\x%x", *CURSOR);
+    CURSOR++;
+    return GetNextToken();
+}
+
+static int ScanEof() {
+    return TK_END;
+}
