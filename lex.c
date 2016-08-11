@@ -7,12 +7,12 @@
 #define LINE        (input.line)
 #define LINEHEAD    (input.line_head)
 
-typedef int (*Scanner)(void);
+typedef int (*scanner)(void);
 
 static unsigned char *peek_point;
 static union value peek_value;
 static struct coord peek_coord;
-static Scanner scanners[256];
+static scanner scanners[256];
 
 union value token_value;
 struct coord token_coord;
@@ -80,7 +80,7 @@ again:
                 CURSOR += strlen(p);
                 goto again;
             }
-        END_FOR
+        ENDFOR
     }
 }
 
@@ -648,4 +648,88 @@ static int ScanBadChar() {
 
 static int ScanEof() {
     return TK_END;
+}
+
+void SetupLexer() {
+    int i;
+
+    for (i = 0; i < END_OF_FILE + 1; i++) {
+        if (isalpha(i))
+            scanners[i] = ScanIdentifier;
+        else if (isdigit(i))
+            scanners[i] = ScanNumericLiteral;
+        else
+            scanners[i] = ScanBadChar;
+
+        scanners[END_OF_FILE] = ScanEof;
+        scanners['\''] = ScanCharLiteral;
+        scanners['"'] = ScanStringLiteral;
+        scanners['+'] = ScanPlus;
+        scanners['-'] = ScanMinus;
+        scanners['*'] = ScanStar;
+        scanners['/'] = ScanSlash;
+        scanners['%'] = ScanPercent;
+        scanners['<'] = ScanLess;
+        scanners['>'] = ScanGreat;
+        scanners['!'] = ScanNot;
+        scanners['='] = ScanEqual;
+        scanners['|'] = ScanBar;
+        scanners['&'] = ScanAmpersand;
+        scanners['^'] = ScanCaret;
+        scanners['.'] = ScanDot;
+        scanners['{'] = ScanLBRACE;
+        scanners['}'] = ScanRBRACE;
+        scanners['['] = ScanLBRACKET;
+        scanners[']'] = ScanRBRACKET;
+        scanners['('] = ScanLPAREN;
+        scanners[')'] = ScanRPAREN;
+        scanners[','] = ScanCOMMA;
+        scanners[';'] = ScanSEMICOLON;
+        scanners['~'] = ScanCOMP;
+        scanners['?'] = ScanQUESTION;
+        scanners[':'] = ScanCOLON;
+
+        if (extra_keywords != NULL) {
+            char *str;
+            struct keyword *p;
+
+            FOR_EACH_ITEM(char*, str, extra_keywords)
+                p = {
+                    {"__int64", 0,  TK_INT64},
+                    {NULL,      0,  TK_ID}
+                };
+                while (p->name) {
+                    if (strcmp(str, p->name) == 0) {
+                        p->len = strlen(str);
+                        break;
+                    }
+                    p++;
+                }
+            ENDFOR;
+        }
+    }
+}
+
+int GetNextToken() {
+    int tok;
+
+    prev_coord = token_coord;
+    SkipWhiteSpace();
+    token_coord.line = LINE;
+    token_coord.col = (int)(CURSOR - LINEHEAD + 1);
+
+    tok = (*scanners[*CURSOR])();
+    return tok;
+}
+
+void BeginPeekToken() {
+    peek_point = CURSOR;
+    peek_value = token_value;
+    peek_coord = token_coord;
+}
+
+void EndPeekToken() {
+    CURSOR = peek_point;
+    token_value = peek_value;
+    token_coord = peek_coord;
 }

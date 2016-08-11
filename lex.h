@@ -1,5 +1,5 @@
 #ifndef __LEX_H_
-#defien __LEX_H_
+#define __LEX_H_
 
 enum token {
     TK_BEGIN,
