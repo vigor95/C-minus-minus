@@ -25,8 +25,8 @@ void EndPeekToken();
 int GetNextToken();
 
 extern union value token_value;
-extern struct Coord token_coord;
-extern struct Coord prev_coord;
+extern struct coord token_coord;
+extern struct coord prev_coord;
 extern char *token_strings[];
 
 #endif

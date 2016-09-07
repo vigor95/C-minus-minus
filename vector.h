@@ -10,29 +10,23 @@ typedef struct vector {
 Vector CreateVector(int);
 void ExpandVector(Vector);
 
-int Len(Vector v) {
-    return v->len;
-}
+#define Len(v) (v->len)
 
-void InsertItem(Vector v, void **x) {
-    if (v->len >= v->size)
-        ExpandVector(v);
-    v->data[v->len++] = x;
-}
+#define InsertItem(v, x)    \
+    if (v->len >= v->size)  \
+        ExpandVector(v);    \
+    v->data[v->len] = item; \
+    v->len++;
 
-void* GetItem(Vector v, int i) {
-    return v->data[i];
-}
+#define GetItem(v, i) (v->data[i])
 
-void* TopItem(Vector v) {
-    return v->len == 0 ? NULL : v->data[v->len - 1];
-}
+#define TopItem(v) (v->len == 0 ? NULL : v->data[v->len - 1])
 
 #define FOR_EACH_ITEM(ty, x, v)     \
 {                                   \
-    int len = v->len;               \
-    for (int i = 0; i < len; i++) { \
-        x = (ty)v->data[i];         \
+    int i, len = v->len;            \
+    for (i = 0; i < len; i++) {     \
+        x = (ty)v->data[i];         
 
 #define ENDFOR  \
     }           \

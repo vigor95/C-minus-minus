@@ -16,9 +16,9 @@ enum {
 };
 
 #define TYPE_COMMON \
-    int categ = 8;  \
-    int qual  = 8;  \
-    int align = 16; \
+    int categ:  8;  \
+    int qual:   8;  \
+    int align:  16; \
     int size;       \
     struct type *bty;
 
@@ -40,8 +40,8 @@ typedef struct record_type {
     char *id;
     Field flds;
     Field *tail;
-    int has_const_fld = 16;
-    int has_flex_arr = 16;
+    int has_const_fld:  16;
+    int has_flex_arr:   16;
 } *RecordType;
 
 typedef struct enum_type {
@@ -56,8 +56,8 @@ typedef struct parameter {
 } *Parameter;
 
 typedef struct signature {
-    int has_proto = 16;
-    int has_ellipse = 16;
+    int has_proto:      16;
+    int has_ellipse:    16;
     Vector params;
 } *Signature;
 

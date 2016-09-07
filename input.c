@@ -17,6 +17,7 @@ void ReadSourceFile(char *filename) {
     input.file = fopen(filename, "r");
     if (input.file == NULL)
         Fatal("Cannot open file: %s. ", filename);
+    printf("open %s ok\n", filename);
     fseek(input.file, 0, SEEK_END);
     input.size = ftell(input.file);
     input.base = (unsigned char*)malloc(input.size + 1);

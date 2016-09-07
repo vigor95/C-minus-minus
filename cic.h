@@ -16,6 +16,7 @@
 #include "str.h"
 #include "lex.h"
 #include "type.h"
+#include "symbol.h"
 
 #define ALIGN(size, align) ((size + align - 1) & (~(align - 1)))
 

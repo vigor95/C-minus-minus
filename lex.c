@@ -202,7 +202,7 @@ static int ScanIntLiteral(unsigned char *start, int len, int base) {
                 i[0] = t1 + t2;
                 t1 = i[1] << 3;
                 t2 = i[1] << 1;
-                if (t1 >> UINT_MAX - t2)
+                if (t1 > UINT_MAX - t2)
                      carry1++;
                 i[1] = t1 + t2;
             }
@@ -294,7 +294,7 @@ static int ScanNumericLiteral() {
     if (*CURSOR == '.')
         return ScanFloatLiteral(start);
 
-    if (CURSOR[0] == '0' && (CURSOR[1] == 'x' || CURSOR[1] = 'X')) {
+    if (CURSOR[0] == '0' && (CURSOR[1] == 'x' || CURSOR[1] == 'X')) {
         CURSOR += 2;
         start = CURSOR;
         base = 16;
@@ -600,7 +600,7 @@ static int ScanAmpersand() {
 
 static int ScanCaret() {
     CURSOR++;
-    if (*CURSOR = '=') {
+    if (*CURSOR == '=') {
         CURSOR++;
         return TK_BITXOR_ASSIGN;
     }
@@ -694,10 +694,7 @@ void SetupLexer() {
             struct keyword *p;
 
             FOR_EACH_ITEM(char*, str, extra_keywords)
-                p = {
-                    {"__int64", 0,  TK_INT64},
-                    {NULL,      0,  TK_ID}
-                };
+                p = keywords_;
                 while (p->name) {
                     if (strcmp(str, p->name) == 0) {
                         p->len = strlen(str);

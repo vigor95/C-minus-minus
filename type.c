@@ -7,6 +7,11 @@ struct type types[VOID - CHAR + 1];
 Type default_function_type;
 Type wchar_type;
 
+Type Promote(Type ty) {
+    return ty->categ < INT ? T(INT) :
+        (ty->categ == FLOAT ? T(DOUBLE) : ty);
+}
+
 Type ArgumentPromote(Type ty) {
     return ty->categ < INT ? T(INT) :
         (ty->categ == FLOAT ? T(DOUBLE) : ty);
