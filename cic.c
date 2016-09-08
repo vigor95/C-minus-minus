@@ -1,4 +1,5 @@
 #include "cic.h"
+#include "ast.h"
 
 static int dump_ast;
 static int dump_ir;
@@ -23,9 +24,8 @@ static void Initialize() {
 }
 
 static void Compile(char *file) {
+    AstTransUnit trans_unit;
     Initialize();
-
-    printf("file is %s\n", file);
 
     int tk;
     while ((tk = GetNextToken()) != TK_END)
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
     current_heap = &program_heap;
     argc--; argv++;
 
-    //i = ParseCmd(argc, argv);
+    i = ParseCmd(argc, argv);
 
     SetupLexer();
     SetupTypeSystem();
