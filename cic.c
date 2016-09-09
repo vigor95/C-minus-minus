@@ -4,6 +4,10 @@
 static int dump_ast;
 static int dump_ir;
 
+FILE *ast_file;
+FILE *ir_file;
+FILE *asm_file;
+
 Heap current_heap;
 
 HEAP(program_heap);
@@ -21,15 +25,14 @@ static void Initialize() {
     current_heap = &file_heap;
     error_count = warning_count = 0;
     InitSymbolTable();
+    ast_file = ir_file = asm_file = NULL;
 }
 
 static void Compile(char *file) {
     AstTransUnit trans_unit;
     Initialize();
 
-    int tk;
-    while ((tk = GetNextToken()) != TK_END)
-        printf("%d\n", tk);
+    trans_unit = ParseTransUnit(file);
 }
 
 static void Finalize() {

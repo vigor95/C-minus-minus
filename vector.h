@@ -15,7 +15,7 @@ void ExpandVector(Vector);
 #define InsertItem(v, x)    \
     if (v->len >= v->size)  \
         ExpandVector(v);    \
-    v->data[v->len] = item; \
+    v->data[v->len] = x; \
     v->len++;
 
 #define GetItem(v, i) (v->data[i])

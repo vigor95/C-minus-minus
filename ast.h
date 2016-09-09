@@ -34,31 +34,31 @@ typedef struct label {
     struct label *next;
 } *Label;
 
-typedef struct astExpression        *AstExpr;
-typedef struct astStatement         *AstStmt;
-typedef struct astDeclaration       *AstDecl;
-typedef struct astTypeName          *AstType;
+typedef struct astExpression        *AstExpression;
+typedef struct astStatement         *AstStatement;
+typedef struct astDeclaration       *AstDeclaration;
+typedef struct astTypeName          *AstTypeName;
 typedef struct astTranslationUnit   *AstTransUnit;
 
 struct initData {
     int offset;
-    AstExpr expr;
+    AstExpression expr;
     InitData next;
 };
 
 #define CREATE_AST_NODE(p, k)   \
     CALLOC(p);                  \
-    p->kind = NK_##K;           \
-    p->cd = TokenCoord;
+    p->kind = NK_##k;           \
+    p->cd = token_coord;
 
 #define NEXT_TOKEN  current_token = GetNextToken();
 
-AstExpr ParseExpr();
-AstExpr ParseConstExpr();
-AstExpr ParseAssignExpr();
-AstStmt ParseCompoundStmt();
-AstType ParseTypeName();
-AstDecl ParseDecl();
+AstExpression ParseExpr();
+AstExpression ParseConstExpr();
+AstExpression ParseAssignExpr();
+AstStatement ParseCompoundStmt();
+AstTypeName ParseTypeName();
+AstDeclaration ParseDecl();
 AstTransUnit ParseTransUnit(char*);
 
 void PostCheckTypedef();
