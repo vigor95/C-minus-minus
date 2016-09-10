@@ -9,9 +9,9 @@ enum {
     POINTER_TO, ARRAY_OF, FUNCTION_RETURN
 };
 
-#define AST_DECLARATOR_COMMON  \
+#define AST_DECLARATOR_COMMON   \
     AST_NODE_COMMON             \
-    struct astDeclarator *dec;        \
+    struct astDeclarator *dec;  \
     char *id;                   \
     TypeDeriveList tydrvlist;
 

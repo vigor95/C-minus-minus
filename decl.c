@@ -118,3 +118,132 @@ static AstInitializer ParseInitializer() {
 
     return init;
 }
+
+static AstInitDeclarator ParseInitDeclarator() {
+    AstInitDeclarator init_dec;
+
+    CREATE_AST_NODE(init_dec, InitDeclarator);
+
+    init_dec->dec = ParseDeclarator(DEC_CONCRETE);
+    if (current_token == TK_ASSIGN) {
+        NEXT_TOKEN;
+        init_dec ->init = ParseInitializer();
+    }
+
+    return init_dec;
+}
+
+static AstDeclarator ParseDirectDeclarator(int kind) {
+    AstDeclarator dec;
+
+    if (current_token == TK_LPAREN) {
+        NEXT_TOKEN;
+        dec = ParseDeclarator(kind);
+        Expect(TK_RPAREN);
+
+        return dec;
+    }
+
+    CREATE_AST_NODE(dec, NameDeclarator);
+
+    if (current_token == TK_ID) {
+        if (kind == DEC_ABSTRACT) {
+            Error(&token_coord,
+                "Identifier is not permitted in the abstract declarator");
+        }
+
+        dec->id = token_value.p;
+
+        NEXT_TOKEN;
+    }
+    else if (kind == DEC_CONCRETE) {
+        Error(&token_coord, "Expect identifier");
+    }
+
+    return dec;
+}
+
+static AstParameterDeclaration ParseParameterDeclaration() {
+    AstParameterDeclaration param_decl;
+
+    CREATE_AST_NODE(param_decl, ParameterDeclaration);
+
+    param_decl->specs = ParseDeclarationSpecifiers();
+    param_decl->dec = ParseDeclarator(DEC_ABSTRACT | DEC_CONCRETE);
+
+    return param_decl;
+}
+
+AstParameterTypelist ParseParmeterTypeList() {
+    AstParameterTypelist param_typelist;
+    AstNode *tail;
+
+    CREATE_AST_NODE(param_typelist, ParameterTypeList);
+
+    param_typelist->param_decls = (AstNode)ParseParameterDeclaration();
+    tail = &param_typelist->param_decls->next;
+    while (current_token == TK_COMMA) {
+        NEXT_TOKEN;
+        if (current_token == TK_ELLIPSE) {
+            param_typelist->ellipse = 1;
+            NEXT_TOKEN;
+            break;
+        }
+        *tail = (AstNode)ParseParameterDeclaration();
+        tail = &(*tail)->next;
+    }
+
+    return param_typelist;
+}
+
+static AstDeclarator ParsePostfixDeclarator(int kind) {
+    AstDeclarator dec = ParseDirectDeclarator(kind);
+
+    while (1) {
+        if (current_token == TK_LBRACKET) {
+            AstArrayDeclarator arr_dec;
+
+            CREATE_AST_NODE(arr_dec, ArrayDeclarator);
+            arr_dec->dec = dec;
+
+            NEXT_TOKEN;
+            if (current_token != TK_RBRACKET) {
+                arr_dec->expr = ParseConstExpr();
+            }
+            Expect(TK_RBRACKET);
+
+            dec = (AstDeclarator)arr_dec;
+        }
+        else if (current_token == TK_LPAREN) {
+            AstFunctionDeclarator func_dec;
+
+            CREATE_AST_NODE(func_dec, FunctionDeclarator);
+            func_dec->dec = dec;
+
+            NEXT_TOKEN;
+            if (IsTypeName(current_token)) {
+                func_dec->param_typelist = ParseParmeterTypeList();
+            }
+            else {
+                func_dec->ids = CreateVector(4);
+                if (current_token == TK_ID) {
+                    InsertItem(func_dec->ids, token_value.p);
+
+                    NEXT_TOKEN;
+                    while (current_token == TK_COMMA) {
+                        NEXT_TOKEN;
+                        if (current_token == TK_ID) {
+                            InsertItem(func_dec->ids, token_value.p);
+                        }
+                        Expect(TK_ID);
+                    }
+                }
+            }
+            Expect(TK_RPAREN);
+            dec = (AstDeclarator)func_dec;
+        }
+        else {
+            return dec;
+        }
+    }
+}
