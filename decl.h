@@ -99,7 +99,7 @@ typedef struct astStructSpecifier {
     AST_NODE_COMMON
     char *id;
     AstNode st_decls;
-} *AstStructSpecifer;
+} *AstStructSpecifier;
 
 typedef struct astEnumerator {
     AST_NODE_COMMON

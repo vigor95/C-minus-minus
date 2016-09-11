@@ -247,3 +247,247 @@ static AstDeclarator ParsePostfixDeclarator(int kind) {
         }
     }
 }
+
+static AstDeclarator ParseDeclarator(int kind) {
+    if (current_token == TK_MUL) {
+        AstPointerDeclarator ptr_dec;
+        AstToken tok;
+        AstNode *tail;
+
+        CREATE_AST_NODE(ptr_dec, PointerDeclarator);
+        tail = &ptr_dec->type_quals;
+
+        NEXT_TOKEN;
+        while (current_token == TK_CONST ||
+                current_token == TK_VOLATILE) {
+            CREATE_AST_NODE(tok, Token);
+            *tail = (AstNode)tok;
+            tail = &tok->next;
+            NEXT_TOKEN;
+        }
+        ptr_dec->dec = ParseDeclarator(kind);
+
+        return (AstDeclarator)ptr_dec;
+    }
+
+    return ParsePostfixDeclarator(kind);
+}
+
+static AstStructDeclarator ParseStructDeclarator() {
+    AstStructDeclarator st_dec;
+
+    CREATE_AST_NODE(st_dec, StructDeclarator);
+
+    if (current_token != TK_COLON) {
+        st_dec->dec = ParseDeclarator(DEC_CONCRETE);
+    }
+    if (current_token == TK_COLON) {
+        NEXT_TOKEN;
+        st_dec->expr = ParseConstExpr();
+    }
+
+    return st_dec;
+}
+
+static AstStructDeclaration ParseStructDeclaration() {
+    AstStructDeclaration st_decl;
+    AstNode *tail;
+
+    CREATE_AST_NODE(st_decl, StructDeclaration);
+
+    st_decl->specs = ParseDeclarationSpecifiers();
+    if (st_decl->specs->stg_classes != NULL) {
+        Error(&st_decl->cd, "Struct/union member should not have storage class");
+        st_decl->specs->stg_classes = NULL;
+    }
+    if (st_decl->specs->type_quals == NULL &&
+            st_decl->specs->type_specs == NULL) {
+        Error(&st_decl->cd, "Expect type specifier or qualifier");
+    }
+
+    if (current_token == TK_SEMICOLON) {
+        NEXT_TOKEN;
+        return st_decl;
+    }
+
+    st_decl->st_decs = (AstNode)ParseStructDeclarator();
+    tail = &st_decl->st_decs->next;
+    while (current_token == TK_COMMA) {
+        NEXT_TOKEN;
+        *tail = (AstNode)ParseStructDeclarator();
+        tail = &(*tail)->next;
+    }
+    Expect(TK_SEMICOLON);
+
+    return st_decl;
+}
+
+static AstStructSpecifier ParseStructOrUnionSpecifier() {
+    AstStructSpecifier st_spec;
+    AstNode *tail;
+
+    CREATE_AST_NODE(st_spec, StructSpecifier);
+    if (current_token == TK_UNION) {
+        st_spec->kind = NK_UnionSpecifier;
+    }
+
+    NEXT_TOKEN;
+    switch (current_token) {
+        case TK_ID:
+            st_spec->id = token_value.p;
+            NEXT_TOKEN;
+            if (current_token == TK_LBRACE)
+                goto lbrace;
+
+            return st_spec;
+
+        case TK_LBRACE:
+lbrace:
+            NEXT_TOKEN;
+            if (current_token == TK_RBRACE) {
+                NEXT_TOKEN;
+                return st_spec;
+            }
+
+            tail = &st_spec->st_decls;
+            while (CurrentTokenIn(first_struct_declaration)) {
+                *tail = (AstNode)ParseStructDeclaration();
+                tail = &(*tail)->next;
+                SkipTo(ff_struct_declaration,
+                        "the start of struct declaration or }");
+            }
+            Expect(TK_RBRACE);
+            return st_spec;
+        default:
+            Error(&token_coord,
+                    "Expect identifier or { after struct/union");
+            return st_spec;
+    }
+}
+
+static AstEnumerator ParseEnumerator() {
+    AstEnumerator enumer;
+
+    CREATE_AST_NODE(enumer, Enumerator);
+
+    if (current_token != TK_ID) {
+        Error(&token_coord, "The enumeration constant must be identifier");
+        return enumer;
+    }
+
+    enumer->id = token_value.p;
+    NEXT_TOKEN;
+    if (current_token == TK_ASSIGN) {
+        NEXT_TOKEN;
+        enumer->expr = ParseConstExpr();
+    }
+
+    return enumer;
+}
+
+static AstEnumSpecifier ParseEnumSpecifier() {
+    AstEnumSpecifier enum_spec;
+    AstNode *tail;
+
+    CREATE_AST_NODE(enum_spec, EnumSpecifier);
+
+    NEXT_TOKEN;
+    if (current_token == TK_ID) {
+        enum_spec->id = token_value.p;
+        NEXT_TOKEN;
+        if (current_token == TK_LBRACE)
+            goto enumerator_list;
+    }
+    else if (current_token == TK_LBRACE) {
+enumerator_list:
+        NEXT_TOKEN;
+        if (current_token == TK_RBRACE)
+            return enum_spec;
+
+        enum_spec->enumers = (AstNode)ParseEnumerator();
+        tail = &enum_spec->enumers->next;
+        while (current_token == TK_COMMA) {
+            NEXT_TOKEN;
+            if (current_token == TK_RBRACE)
+                break;
+            *tail = (AstNode)ParseEnumerator();
+            tail = &(*tail)->next;
+        }
+        Expect(TK_RBRACE);
+    }
+    else {
+        Error(&token_coord, "Expect identifier or { after enum");
+    }
+
+    return enum_spec;
+}
+
+static AstSpecifiers ParseDeclarationSpecifiers() {
+    AstSpecifiers specs;
+    AstToken tok;
+    AstNode *sc_tail, *tq_tail, *ts_tail;
+    int see_ty = 0;
+
+    CREATE_AST_NODE(specs, Specifiers);
+    sc_tail = &specs->stg_classes;
+    tq_tail = &specs->type_quals;
+    ts_tail = &specs->type_specs;
+
+next_specifier:
+    switch (current_token) {
+        case TK_AUTO: case TK_REGISTER:
+        case TK_STATIC: case TK_EXTERN: case TK_TYPEDEF:
+            CREATE_AST_NODE(tok, Token);
+            tok->token = current_token;
+            *sc_tail = &tok->next;
+            NEXT_TOKEN;
+            break;
+        case TK_CONST: case TK_VOLATILE:
+            CREATE_AST_NODE(tok, Token);
+            tok->token = current_token;
+            *tq_tail = (AstNode)tok;
+            tq_tail = &tok->next;
+            NEXT_TOKEN;
+            break;
+        case TK_VOID: case TK_CHAR: case TK_SHORT: case TK_INT:
+        case TK_INT64: case TK_LONG: case TK_FLOAT: case TK_DOUBLE:
+        case TK_SIGNED: case TK_UNSIGNED:
+            CREATE_AST_NODE(tok, Token);
+            tok->token = current_token;
+            *ts_tail = (AstNode)tok;
+            ts_tail = &tok->next;
+            see_ty = 1;
+            NEXT_TOKEN;
+            break;
+        case TK_ID:
+            if (!see_ty && IsTypedefName(token_value.p)) {
+                AstTypedefName tname;
+                CREATE_AST_NODE(tname, TypedefName);
+                tname->id = token_value.p;
+                *ts_tail = (AstNode)tname;
+                ts_tail = &tname->next;
+                NEXT_TOKEN;
+                see_ty = 1;
+                break;
+            }
+            return specs;
+        case TK_STRUCT: case TK_UNION:
+            *ts_tail = (AstNode)ParseStructOrUnionSpecifier();
+            ts_tail = &(*ts_tail)->next;
+            see_ty = 1;
+            break;
+        case TK_ENUM:
+            *ts_tail = (AstNode)ParseEnumSpecifier();
+            ts_tail = &(*ts_tail)->next;
+            see_ty = 1;
+            break;
+        default:
+            return specs;
+    }
+    goto next_specifier;
+}
+
+int IsTypeName(int tok) {
+    return tok == TK_ID ? IsTypedefName(token_value.p) :
+        (TK_AUTO <= tok && tok <= TK_VOID);
+}
