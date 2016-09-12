@@ -28,15 +28,26 @@ static void Initialize() {
     ast_file = ir_file = asm_file = NULL;
 }
 
+static void Finalize() {
+    FreeHeap(&file_heap);
+}
+
 static void Compile(char *file) {
     AstTransUnit trans_unit;
     Initialize();
 
     trans_unit = ParseTransUnit(file);
-}
 
-static void Finalize() {
-    FreeHeap(&file_heap);
+    CheckTransUnit(trans_unit);
+
+    if (error_count != 0)
+        goto exit;
+
+    if (dump_ast)
+        DumpTransUnit(trans_unit);
+
+exit:
+    Finalize();
 }
 
 static int ParseCmd(int argc, char *argv[]) {

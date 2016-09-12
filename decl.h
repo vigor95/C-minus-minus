@@ -160,7 +160,7 @@ typedef struct astFunction {
     int has_return;
 } *AstFunction;
 
-struct astTransUnit {
+struct astTranslationUnit {
     AST_NODE_COMMON
     AstNode ext_decls;
 };

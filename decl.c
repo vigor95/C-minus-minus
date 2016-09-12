@@ -491,3 +491,157 @@ int IsTypeName(int tok) {
     return tok == TK_ID ? IsTypedefName(token_value.p) :
         (TK_AUTO <= tok && tok <= TK_VOID);
 }
+
+AstTypeName ParseTypeName() {
+    AstTypeName ty_name;
+
+    CREATE_AST_NODE(ty_name, TypeName);
+
+    ty_name->specs = ParseDeclarationSpecifiers();
+    if (ty_name->specs->stg_classes != NULL) {
+        Error(&ty_name->cd, "Type name should not have storage class");
+        ty_name->specs->stg_classes = NULL;
+    }
+    ty_name->dec = ParseDeclarator(DEC_ABSTRACT);
+
+    return ty_name;
+}
+
+static AstDeclaration ParseCommonHeader() {
+    AstDeclaration decl;
+    AstNode *tail;
+
+    CREATE_AST_NODE(decl, Declaration);
+
+    decl->specs = ParseDeclarationSpecifiers();
+    if (current_token != TK_SEMICOLON) {
+        decl->init_decs = (AstNode)ParseInitDeclarator();
+        tail = &decl->init_decs->next;
+        while (current_token == TK_COMMA) {
+            NEXT_TOKEN;
+            *tail = (AstNode)ParseInitDeclarator();
+            tail = &(*tail)->next;
+        }
+    }
+
+    return decl;
+}
+
+AstDeclaration ParseDeclaration() {
+    AstDeclaration decl;
+
+    decl = ParseCommonHeader();
+    Expect(TK_SEMICOLON);
+    PreCheckTypedef(decl);
+
+    return decl;
+}
+
+static AstFunctionDeclarator
+GetFunctionDeclarator(AstInitDeclarator init_dec) {
+    AstDeclarator dec;
+
+    if (init_dec == NULL || init_dec->next != NULL
+            || init_dec->init != NULL) {
+        return NULL;
+    }
+
+    dec = init_dec->dec;
+    while (dec && dec->kind != NK_FunctionDeclarator)
+        dec = dec->dec;
+
+    if (dec == NULL || dec->dec->kind != NK_NameDeclarator)
+        return NULL;
+
+    return (AstFunctionDeclarator)dec;
+}
+
+static AstNode ParseExternalDeclaration() {
+    AstDeclaration decl = NULL;
+    AstInitDeclarator init_dec = NULL;
+    AstFunctionDeclarator fdec;
+
+    decl = ParseCommonHeader();
+    init_dec = (AstInitDeclarator)decl->init_decs;
+    if (decl->specs->stg_classes != NULL &&
+            ((AstToken)decl->specs->stg_classes)->token == TK_TYPEDEF)
+        goto not_func;
+
+    fdec = GetFunctionDeclarator(init_dec);
+    if (fdec != NULL) {
+        AstFunction func;
+        AstNode *tail;
+
+        if (current_token == TK_SEMICOLON) {
+            NEXT_TOKEN;
+            if (current_token != TK_LBRACE)
+                return (AstNode)decl;
+
+            Error(&decl->cd, "Maybe you accidently add the ;");
+        }
+        else if (fdec->param_typelist && current_token != TK_LBRACE) {
+            goto not_func;
+        }
+
+        CREATE_AST_NODE(func, Function);
+
+        func->cd = decl->cd;
+        func->specs = decl->specs;
+        func->dec = init_dec->dec;
+        func->fdec = fdec;
+
+        level++;
+        if (func->fdec->param_typelist) {
+            AstNode p = func->fdec->param_typelist->param_decls;
+
+            while (p) {
+                CheckTypedefName(0,
+                    GetOutermostID(((AstParameterDeclaration)p)->dec));
+                p = p->next;
+            }
+        }
+        tail = &func->dec;
+        while (CurrentTokenIn(first_declaration)) {
+            *tail = (AstNode)ParseDeclaration();
+            tail = &(*tail)->next;
+        }
+        level++;
+
+        func->stmt = ParseCompoundStmt();
+
+        return (AstNode)func;
+    }
+
+not_func:
+    Expect(TK_SEMICOLON);
+    PreCheckTypedef(decl);
+
+    return (AstNode)decl;
+}
+
+AstTransUnit ParseTransUnit(char *filename) {
+    AstTransUnit trans_unit;
+    AstNode *tail;
+
+    ReadSourceFile(filename);
+
+    token_coord.filename = filename;
+    token_coord.line = token_coord.col = token_coord.ppline = 1;
+    typedef_names = CreateVector(8);
+    overload_names = CreateVector(8);
+
+    CREATE_AST_NODE(trans_unit, TranslationUnit);
+    tail = &trans_unit->ext_decls;
+
+    NEXT_TOKEN;
+    while (current_token != TK_END) {
+        *tail = ParseExternalDeclaration();
+        tail = &(*tail)->next;
+        SkipTo(first_external_declaration,
+                "The beginning of external declaration");
+    }
+
+    CloseSourceFile();
+
+    return trans_unit;
+}
