@@ -1,1 +1,1 @@
-# A C compiler in C.
+# A C compiler in C++.
