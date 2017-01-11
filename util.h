@@ -44,7 +44,7 @@ void file_error(char*, char*, char*, char*, char*);
 
 int get_column(FILE*);
 
-char* copy_alloced(char*);
+char* copy_alloced(const char*);
 
 int intlit_comp(const void*, const void*);
 
